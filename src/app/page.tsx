@@ -185,6 +185,14 @@ export default function HomePage() {
         }}>
           A high-performance REST API for scraping anime data from <strong style={{ color: "#c7d2fe" }}>anikototv.to</strong> — built with Next.js, Cheerio, and in-memory caching.
         </p>
+        <p style={{
+          fontSize: "13px",
+          color: "#64748b",
+          marginBottom: "24px",
+        }}>
+          ✦ Author: <span style={{ color: "#a5b4fc", fontWeight: 600 }}>Teramoto</span>
+        </p>
+
         <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
           {["12 Endpoints", "In-Memory Cache", "TypeScript"].map((badge) => (
             <span key={badge} style={{

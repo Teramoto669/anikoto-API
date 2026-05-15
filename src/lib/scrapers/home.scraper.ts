@@ -32,7 +32,11 @@ function parseSpotlight($: cheerio.CheerioAPI): SpotlightAnime[] {
     const bgStyle = $el.find('.image div').attr('style') ?? '';
     const imageMatch = bgStyle.match(/url\(['"]?(.+?)['"]?\)/);
 
+    const watchUrl = $el.find('.actions a.play').attr('href') ?? '';
+    const slug = watchUrl.replace(/^https?:\/\/[^/]+/, '').replace(/^\/watch\//, '').replace(/\/ep-\d+$/, '').replace(/\/$/, '');
+
     results.push({
+      slug,
       title: $el.find('.title').text().trim(),
       titleJp: $el.find('.title').attr('data-jp')?.trim(),
       rating: $el.find('.meta .rating').text().trim() || undefined,
@@ -41,7 +45,8 @@ function parseSpotlight($: cheerio.CheerioAPI): SpotlightAnime[] {
       hasSub: $el.find('.meta .sub').length > 0,
       date: $el.find('.meta .date').text().trim() || undefined,
       synopsis: $el.find('.synopsis').text().trim() || undefined,
-      watchUrl: $el.find('.actions a.play').attr('href') ?? '',
+      watchUrl,
+      href: `/api/anime/${slug}`,
       image: imageMatch?.[1] ?? '',
     });
   });
@@ -56,14 +61,15 @@ function parseLatestEpisodes($: cheerio.CheerioAPI): LatestEpisodeItem[] {
     const $link = $poster.find('a');
     const href = $link.attr('href') ?? '';
     const watchHref = href; // already includes ep-N
-    const slug = href.replace(/\/watch\//, '').replace(/\/ep-\d+$/, '');
+    const slug = href.replace(/^https?:\/\/[^/]+/, '').replace(/^\/watch\//, '').replace(/\/ep-\d+$/, '');
 
     results.push({
       id: $poster.attr('data-tip') ?? slug,
+      slug,
       title: $el.find('.info a.name').text().trim(),
       titleJp: $el.find('.info a.name').attr('data-jp')?.trim(),
       image: $poster.find('img').attr('src') ?? '',
-      href: `/watch/${slug}`,
+      href: `/api/anime/${slug}`,
       watchHref,
       type: $poster.find('.meta .right').text().trim() || undefined,
       episodes: parseEpisodeStatus($poster),
@@ -77,14 +83,16 @@ function parseTopTable($: cheerio.CheerioAPI, section: string): TopTableItem[] {
   $(`section[data-name="${section}"] .scaff.items .item`).each((_, el) => {
     const $el = $(el);
     const $poster = $el.find('.poster');
-    const slug = $el.attr('href')?.replace(/^https?:\/\/[^/]+/, '') ?? '';
+    const href = $el.attr('href') ?? '';
+    const slug = href.replace(/^https?:\/\/[^/]+/, '').replace(/^\/watch\//, '').replace(/\/ep-\d+$/, '');
 
     results.push({
       id: $poster.attr('data-tip') ?? slug,
+      slug,
       title: $el.find('.name').text().trim(),
       titleJp: $el.find('.name').attr('data-jp')?.trim(),
       image: $poster.find('img').attr('src') ?? '',
-      href: slug,
+      href: `/api/anime/${slug}`,
       type: $el.find('.meta .dot:not(.ep-wrap)').first().text().trim() || undefined,
       episodes: parseEpisodeStatus($el),
       date: $el.find('.meta .dot:last-child').text().trim() || undefined,
@@ -100,15 +108,17 @@ function parseTopAnime($: cheerio.CheerioAPI, tabName: string): TopAnimeItem[] {
     const rankClass = [...($el.attr('class')?.split(' ') ?? [])].find((c) => c.startsWith('rank'));
     const rank = rankClass ? parseInt(rankClass.replace('rank', ''), 10) : 0;
     const $poster = $el.find('.poster');
-    const slug = $el.attr('href')?.replace(/^https?:\/\/[^/]+/, '') ?? '';
+    const href = $el.attr('href') ?? '';
+    const slug = href.replace(/^https?:\/\/[^/]+/, '').replace(/^\/watch\//, '').replace(/\/ep-\d+$/, '');
 
     results.push({
       rank,
       id: $poster.attr('data-tip') ?? slug,
+      slug,
       title: $el.find('.name').text().trim(),
       titleJp: $el.find('.name').attr('data-jp')?.trim(),
       image: $poster.find('img').attr('src') ?? '',
-      href: slug,
+      href: `/api/anime/${slug}`,
       type: $el.find('.meta .dot:not(.ep-wrap)').first().text().trim() || undefined,
       episodes: parseEpisodeStatus($el),
     });

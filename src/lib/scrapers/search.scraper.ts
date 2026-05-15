@@ -22,7 +22,7 @@ function parseAnimeGrid($: cheerio.CheerioAPI, selector: string): AnimeCard[] {
   $(selector).each((_, el) => {
     const $el = $(el);
     const href = $el.attr('href') ?? $el.find('a').first().attr('href') ?? '';
-    const slug = href.replace(/^https?:\/\/[^/]+/, '').replace(/\/$/, '');
+    const slug = href.replace(/^https?:\/\/[^/]+/, '').replace(/^\/watch\//, '').replace(/\/ep-\d+$/, '').replace(/\/$/, '');
     const $poster = $el.find('.poster, [data-tip]').first();
     const id = $poster.attr('data-tip') ?? slug;
 
@@ -35,10 +35,11 @@ function parseAnimeGrid($: cheerio.CheerioAPI, selector: string): AnimeCard[] {
 
     results.push({
       id,
+      slug,
       title: $el.find('.name, .d-title').first().text().trim(),
       titleJp: $el.find('.name, .d-title').first().attr('data-jp')?.trim(),
       image: $el.find('img').first().attr('src') ?? '',
-      href: slug,
+      href: `/api/anime/${slug}`,
       type: $el.find('.meta .dot:not(.ep-wrap):not(.score)').first().text().trim() || undefined,
       episodes: parseCardEpisodeStatus($el),
       date: yearText || undefined,

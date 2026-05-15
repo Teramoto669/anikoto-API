@@ -8,6 +8,7 @@ export interface EpisodeStatus {
 
 export interface AnimeCard {
   id: string;
+  slug: string;
   title: string;
   titleJp?: string;
   image: string;
@@ -22,6 +23,7 @@ export interface AnimeCard {
 // ─── Home ────────────────────────────────────────────────────────────────────
 
 export interface SpotlightAnime {
+  slug: string;
   title: string;
   titleJp?: string;
   rating?: string;
@@ -31,11 +33,13 @@ export interface SpotlightAnime {
   date?: string;
   synopsis?: string;
   watchUrl: string;
+  href: string;
   image: string;
 }
 
 export interface LatestEpisodeItem {
   id: string;
+  slug: string;
   title: string;
   titleJp?: string;
   image: string;
@@ -47,6 +51,7 @@ export interface LatestEpisodeItem {
 
 export interface TopTableItem {
   id: string;
+  slug: string;
   title: string;
   titleJp?: string;
   image: string;
@@ -59,6 +64,7 @@ export interface TopTableItem {
 export interface TopAnimeItem {
   rank: number;
   id: string;
+  slug: string;
   title: string;
   titleJp?: string;
   image: string;
@@ -103,6 +109,7 @@ export interface AnimeDetail {
   studios: string[];
   producers: string[];
   watchUrl: string;
+  episodes: AnimeEpisodes;
 }
 
 // ─── Episode List ────────────────────────────────────────────────────────────

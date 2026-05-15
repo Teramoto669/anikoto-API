@@ -20,11 +20,13 @@ export async function scrapeSchedule(): Promise<ScheduleDay[]> {
     $day.next('.schedule-list, .schedule-items').find('.item, .flw-item').each((__, el) => {
       const $el = $(el);
       const href = $el.find('a').attr('href') ?? '';
+      const slug = href.replace(/^https?:\/\/[^/]+/, '').replace(/^\/watch\//, '').replace(/\/ep-\d+$/, '').replace(/\/$/, '');
       animes.push({
-        id: $el.find('[data-tip]').attr('data-tip') ?? href,
+        id: $el.find('[data-tip]').attr('data-tip') ?? slug,
+        slug,
         title: $el.find('.name, .d-title').text().trim(),
         image: $el.find('img').attr('src') ?? '',
-        href,
+        href: `/api/anime/${slug}`,
         type: $el.find('.type').text().trim() || undefined,
       });
     });

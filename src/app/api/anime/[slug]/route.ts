@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { scrapeAnimeDetail } from '@/lib/scrapers/anime.scraper';
+import { scrapeAnimeDetail, scrapeAnimeEpisodes } from '@/lib/scrapers/anime.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
 
@@ -30,8 +30,8 @@ export async function GET(
 
     const key = `anime:${slug}`;
     const data = refresh
-      ? await scrapeAnimeDetail(slug)
-      : await getOrSet(key, () => scrapeAnimeDetail(slug), CACHE_TTL.ANIME);
+      ? await fetchAndCombine(slug)
+      : await getOrSet(key, () => fetchAndCombine(slug), CACHE_TTL.ANIME);
 
     return NextResponse.json({ ok: true, data });
   } catch (err: unknown) {
@@ -39,4 +39,12 @@ export async function GET(
     console.error('[GET /api/anime/[slug]]', message);
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
+}
+
+async function fetchAndCombine(slug: string) {
+  const [detail, episodes] = await Promise.all([
+    scrapeAnimeDetail(slug),
+    scrapeAnimeEpisodes(slug)
+  ]);
+  return { ...detail, episodes };
 }

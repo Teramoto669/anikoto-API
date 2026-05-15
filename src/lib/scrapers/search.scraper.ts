@@ -63,10 +63,12 @@ export async function scrapeSearch(keyword: string): Promise<SearchResult> {
 function buildFilterUrl(params: FilterParams): string {
   const qs = new URLSearchParams();
   if (params.keyword) qs.set('keyword', params.keyword);
+  // Anikoto TV uses hidden type="" and actual type is in term_type[]
+  qs.set('type', '');
   if (params.genre?.length) params.genre.forEach((g) => qs.append('genre[]', g));
   if (params.season?.length) params.season.forEach((s) => qs.append('season[]', s));
   if (params.year?.length) params.year.forEach((y) => qs.append('year[]', y));
-  if (params.type?.length) params.type.forEach((t) => qs.append('type[]', t));
+  if (params.type?.length) params.type.forEach((t) => qs.append('term_type[]', t));
   if (params.status?.length) params.status.forEach((s) => qs.append('status[]', s));
   if (params.language?.length) params.language.forEach((l) => qs.append('language[]', l));
   if (params.rating?.length) params.rating.forEach((r) => qs.append('rating[]', r));

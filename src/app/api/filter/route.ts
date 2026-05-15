@@ -33,7 +33,7 @@ export async function GET(req: Request) {
       genre: searchParams.getAll('genre[]'),
       season: searchParams.getAll('season[]'),
       year: searchParams.getAll('year[]'),
-      type: searchParams.getAll('type[]'), // wait, maybe I need to check if the frontend uses `type[]` or `term_type[]` based on the HTML but I'll stick to type[] as implemented
+      type: [...searchParams.getAll('type[]'), ...searchParams.getAll('term_type[]')],
       status: searchParams.getAll('status[]'),
       language: searchParams.getAll('language[]'),
       rating: searchParams.getAll('rating[]'),

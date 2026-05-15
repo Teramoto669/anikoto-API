@@ -152,7 +152,7 @@ export interface FilterParams {
 }
 
 export interface FilterOptions {
-  genres: string[];
+  genres: { id: string; name: string; slug: string; }[];
   years: string[];
   types: string[];
   seasons: string[];

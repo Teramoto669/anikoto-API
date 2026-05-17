@@ -19,7 +19,7 @@ export default function HomePage() {
     },
     {
       method: "GET",
-      path: "/api/filter",
+      path: "/api/filter?keyword=&type=&sort=default",
       description: "Advanced anime filter with multiple parameters.",
       params: [
         { name: "keyword", type: "string", optional: true, desc: "Search keyword" },
@@ -33,7 +33,7 @@ export default function HomePage() {
         { name: "sort", type: "string", optional: true, desc: "Sort order (latest-updated | score | name-az | release-date | etc.)" },
         { name: "page", type: "number", optional: true, desc: "Page number (default: 1)" },
       ],
-      example: "/api/filter?genre[]=1&year[]=2026&term_type[]=Movie&language[]=sub&sort=score",
+      example: "/api/filter?keyword=demon+slayer&type[]=Movie&type[]=OVA&sort=score",
     },
     {
       method: "GET",

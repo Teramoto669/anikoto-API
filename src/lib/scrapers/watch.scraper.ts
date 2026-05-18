@@ -16,6 +16,7 @@ export interface VideoTrack extends SubtitleTrack {
 
 export interface VideoSource {
   server: string;
+  type: string; // "sub" | "dub" | "softsub"
   url: string; // The iframe/embed URL
   m3u8?: string | null; // Extracted m3u8 direct link
   referer?: string; // Required referer for the m3u8 stream
@@ -81,6 +82,7 @@ export async function scrapeWatch(slug: string, epNum: string): Promise<WatchDat
 
           sources.push({
             server: server.name,
+            type: server.type,
             url: embedUrl,
             m3u8: extracted?.m3u8 ?? null,
             referer: extracted?.referer,

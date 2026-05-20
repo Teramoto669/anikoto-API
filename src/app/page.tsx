@@ -48,12 +48,14 @@ export default function HomePage() {
     {
       method: "GET",
       path: "/api/anime/:slug/episodes",
-      description: "Get the full episode list for an anime.",
+      description: "Get a list of anime episodes for a given anime, optionally filtered by episode range.",
       params: [
         { name: "slug", type: "string", optional: false, desc: "Anime slug from the URL" },
         { name: "refresh", type: "string", optional: true, desc: "Set to 1 to bypass cache" },
+        { name: "start", type: "string", optional: true, desc: "Starting episode number for the range" },
+        { name: "end", type: "string", optional: true, desc: "Ending episode number for the range" },
       ],
-      example: "/api/anime/haibara-s-teenage-new-game-8axzw/episodes",
+      example: "/api/anime/one-piece-odmau/episodes?start=5&end=10",
     },
     {
       method: "GET",

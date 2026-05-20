@@ -107,7 +107,11 @@ export async function scrapeAnimeDetail(slug: string): Promise<AnimeDetail> {
  * Scrapes the episode list from the watch page embedded episode section.
  * The site loads episodes dynamically; we also try the static HTML as a fallback.
  */
-export async function scrapeAnimeEpisodes(slug: string): Promise<AnimeEpisodes> {
+export async function scrapeAnimeEpisodes(
+  slug: string,
+  startEpisode?: number,
+  endEpisode?: number
+): Promise<AnimeEpisodes> {
   let $ = await fetchPage(`/watch/${slug}`);
   const animeId = $('#watch-main').attr('data-id') ?? '';
 
@@ -126,7 +130,7 @@ export async function scrapeAnimeEpisodes(slug: string): Promise<AnimeEpisodes> 
     }
   }
 
-  const episodes: Episode[] = [];
+  const allEpisodes: Episode[] = [];
 
   // Episodes rendered as <li> inside #w-episodes
   $('#w-episodes ul.ep-range li a, #w-episodes a[href], #w-episodes a[data-num]').each((_, el) => {
@@ -140,8 +144,8 @@ export async function scrapeAnimeEpisodes(slug: string): Promise<AnimeEpisodes> 
       || href.split('/ep-')[1]
       || '';
 
-    episodes.push({
-      number: epNum || String(episodes.length + 1),
+    allEpisodes.push({
+      number: epNum || String(allEpisodes.length + 1),
       title: $el.attr('title')?.trim() || undefined,
       href,
       id: $el.attr('data-id') ?? undefined,
@@ -151,5 +155,15 @@ export async function scrapeAnimeEpisodes(slug: string): Promise<AnimeEpisodes> 
     });
   });
 
-  return { animeId, slug, episodes };
+  let filteredEpisodes = allEpisodes;
+
+  // Apply range filtering if startEpisode and endEpisode are provided
+  if (startEpisode !== undefined && endEpisode !== undefined) {
+    filteredEpisodes = allEpisodes.filter((ep) => {
+      const num = parseInt(ep.number, 10);
+      return num >= startEpisode && num <= endEpisode;
+    });
+  }
+
+  return { animeId, slug, episodes: filteredEpisodes };
 }

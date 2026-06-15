@@ -53,8 +53,25 @@ async function _doMegaplay(
     timeout: 5000,
   });
 
-  const m3u8: string | undefined = data?.sources?.file;
+  let m3u8: string | undefined = data?.sources?.file;
   const tracks: SubtitleTrack[] = data?.tracks || [];
+
+  if (m3u8 && m3u8.includes('mewstream.buzz')) {
+    // Bypass Cloudflare bot-protection blocks by replacing cdn.mewstream.buzz with lostproject.club mirror.
+    let replacementHost = '1oe.lostproject.club';
+    const firstTrack = tracks.find(t => t.file && !t.file.includes('mewstream.buzz'));
+    if (firstTrack) {
+      try {
+        replacementHost = new URL(firstTrack.file).host;
+      } catch (_) {}
+    }
+    try {
+      const parsedM3u8 = new URL(m3u8);
+      parsedM3u8.host = replacementHost;
+      m3u8 = parsedM3u8.toString();
+    } catch (_) {}
+  }
+
   return m3u8 ? { m3u8, referer, tracks } : null;
 }
 

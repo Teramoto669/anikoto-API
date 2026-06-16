@@ -85,6 +85,7 @@ async function fetchAndCombine(slug: string, startEpisode?: number, endEpisode?:
     scrapeAnimeEpisodes(slug, startEpisode, endEpisode),
     scrapeAnimeDetail(slug),
   ]);
-  // Override the episodes on detail with the (potentially filtered) result
-  return { ...detail, episodes };
+  const episodesWithoutRelated = { ...episodes };
+  delete episodesWithoutRelated.related;
+  return { ...detail, episodes: episodesWithoutRelated };
 }

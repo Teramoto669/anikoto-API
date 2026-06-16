@@ -740,6 +740,25 @@ components:
             $ref: '#/components/schemas/AnimeCard'
 
     # ─── Anime Detail ──────────────────────────────────────────────
+    RelatedAnime:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        titleJp:
+          type: string
+        image:
+          type: string
+          format: uri
+        relation:
+          type: string
+        href:
+          type: string
+        slug:
+          type: string
+
     Episode:
       type: object
       properties:
@@ -769,6 +788,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Episode'
+        related:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelatedAnime'
 
     AnimeDetail:
       type: object
@@ -828,6 +851,10 @@ components:
           type: string
         episodes:
           $ref: '#/components/schemas/AnimeEpisodes'
+        related:
+          type: array
+          items:
+            $ref: '#/components/schemas/RelatedAnime'
 
     # ─── Search / Filter ───────────────────────────────────────────
     SearchResult:

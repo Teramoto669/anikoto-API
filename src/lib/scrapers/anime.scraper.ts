@@ -192,19 +192,31 @@ async function fetchAllEpisodes(slug: string): Promise<AnimeEpisodes> {
     const $ = await fetchPage(`/watch/${slug}`);
     const animeId = $('#watch-main').attr('data-id') ?? '';
 
-    // If the episodes container is empty or loading, fetch via AJAX
-    if (animeId && $('#w-episodes a').length === 0) {
-      try {
-        const data = await fetchJson<{ status: boolean; result: string }>(`/ajax/episode/list/${animeId}`);
-        if (data && data.result) {
-          // Load the HTML chunk from AJAX into cheerio
-          const ajaxDoc = cheerio.load(data.result);
-          $('#w-episodes').html(ajaxDoc.html());
+    // Kick off both the episode-list AJAX fallback and the watch-order (related)
+    // fetch in parallel — they are independent of each other.
+    const episodeAjaxPromise = (async () => {
+      if (animeId && $('#w-episodes a').length === 0) {
+        try {
+          const data = await fetchJson<{ status: boolean; result: string }>(`/ajax/episode/list/${animeId}`);
+          if (data && data.result) {
+            const ajaxDoc = cheerio.load(data.result);
+            $('#w-episodes').html(ajaxDoc.html());
+          }
+        } catch (err) {
+          console.error('Failed to fetch episodes via AJAX:', err);
         }
-      } catch (err) {
-        console.error('Failed to fetch episodes via AJAX:', err);
       }
-    }
+    })();
+
+    const watchOrderPromise = animeId
+      ? fetchJson<{ status: number; result: string }>(`/api/watch-order/${animeId}`).catch((err) => {
+          console.error('Failed to fetch related anime in fetchAllEpisodes:', err);
+          return null;
+        })
+      : Promise.resolve(null);
+
+    // Wait for episode AJAX to finish before parsing (it mutates the cheerio tree)
+    await episodeAjaxPromise;
 
     const allEpisodes: Episode[] = [];
 
@@ -233,17 +245,12 @@ async function fetchAllEpisodes(slug: string): Promise<AnimeEpisodes> {
       });
     });
 
+    // Resolve the already-in-flight watch-order request
     let related: RelatedAnime[] = [];
-    if (animeId) {
-      try {
-        const ajaxData = await fetchJson<{ status: number; result: string }>(`/api/watch-order/${animeId}`);
-        if (ajaxData && ajaxData.status === 200 && ajaxData.result) {
-          const relatedDoc = cheerio.load(ajaxData.result);
-          related = parseRelated(relatedDoc, slug);
-        }
-      } catch (err) {
-        console.error('Failed to fetch related anime in fetchAllEpisodes:', err);
-      }
+    const ajaxData = await watchOrderPromise;
+    if (ajaxData && ajaxData.status === 200 && ajaxData.result) {
+      const relatedDoc = cheerio.load(ajaxData.result);
+      related = parseRelated(relatedDoc, slug);
     }
 
     return { animeId, slug, episodes: allEpisodes, related };

@@ -76,8 +76,22 @@ export default function DocsPage() {
 
       const res = await fetch(url, { method: method.toUpperCase() });
       let data: unknown;
-      try { data = await res.json(); } catch { data = await res.text(); }
+      // Always read as text first to avoid "body stream already read" errors.
+      // The watch endpoint returns NDJSON (application/x-ndjson) — collect all
+      // chunks and present them as an array of parsed objects.
+      const rawText = await res.text();
+      const contentType = res.headers.get('content-type') ?? '';
+      if (contentType.includes('x-ndjson') || contentType.includes('ndjson')) {
+        // Parse each non-empty line as a JSON object
+        data = rawText
+          .split('\n')
+          .filter((l) => l.trim())
+          .map((l) => { try { return JSON.parse(l); } catch { return l; } });
+      } else {
+        try { data = JSON.parse(rawText); } catch { data = rawText; }
+      }
       setTestResponse({ status: res.status, data, loading: false });
+
     } catch (err: any) {
       setTestResponse({ status: 0, data: { error: err.message }, loading: false });
     }

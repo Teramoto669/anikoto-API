@@ -146,6 +146,58 @@ async function _doMegacloud(
   return m3u8 ? { m3u8, referer, tracks } : null;
 }
 
+async function _tryKiwiMapperUrl(
+  mapperBase: string,
+  malId: string,
+  epNum: string | number,
+  timestamp: string,
+  type: 'sub' | 'dub',
+  baseUrl: string
+): Promise<ExtractedStream> {
+  const mapperUrl = `${mapperBase}/${encodeURIComponent(malId)}/${encodeURIComponent(epNum)}/${encodeURIComponent(timestamp)}`;
+  const { data } = await axios.get(mapperUrl, {
+    headers: {
+      ...DEFAULT_HEADERS,
+      Referer: baseUrl + '/',
+      Origin: baseUrl,
+    },
+    timeout: 8000,
+  });
+
+  if (!data || typeof data !== 'object') throw new Error('Invalid response');
+
+  let serverCode: string | null = null;
+  for (const key of Object.keys(data)) {
+    if (key === 'status') continue;
+    const entry = data[key]?.[type];
+    if (entry?.url && typeof entry.url === 'string') {
+      serverCode = entry.url;
+      break;
+    }
+  }
+
+  if (!serverCode) throw new Error('No server code found');
+
+  const { data: serverData } = await axios.get(`${baseUrl}/ajax/server?get=${serverCode}`, {
+    headers: { ...DEFAULT_HEADERS, 'X-Requested-With': 'XMLHttpRequest' },
+    timeout: 5000,
+  });
+
+  let embedUrl: string | null = serverData?.result?.url ?? null;
+  if (!embedUrl) throw new Error('No embed URL');
+
+  if (embedUrl.includes('#')) {
+    try {
+      const encoded = embedUrl.split('#')[1];
+      embedUrl = Buffer.from(encoded, 'base64').toString('utf-8');
+    } catch (_) {}
+  }
+
+  const referer = 'https://kwik.cx2.mewcdn.online/';
+  const tracks = await parseM3u8Subtitles(embedUrl, referer);
+  return { m3u8: embedUrl, referer, tracks };
+}
+
 export async function extractKiwiMapper(
   malId: string,
   epNum: string | number,
@@ -153,56 +205,21 @@ export async function extractKiwiMapper(
   type: 'sub' | 'dub',
   baseUrl: string
 ): Promise<ExtractedStream | null> {
-  for (const mapperBase of KIWI_MAPPER_URLS) {
-    try {
-      const mapperUrl = `${mapperBase}/${encodeURIComponent(malId)}/${encodeURIComponent(epNum)}/${encodeURIComponent(timestamp)}`;
-      const { data } = await axios.get(mapperUrl, {
-        headers: {
-          ...DEFAULT_HEADERS,
-          Referer: baseUrl + '/',
-          Origin: baseUrl,
-        },
-        timeout: 8000,
-      });
-
-      if (!data || typeof data !== 'object') continue;
-
-      let serverCode: string | null = null;
-      for (const key of Object.keys(data)) {
-        if (key === 'status') continue;
-        const entry = data[key]?.[type];
-        if (entry?.url && typeof entry.url === 'string') {
-          serverCode = entry.url;
-          break;
-        }
-      }
-
-      if (!serverCode) continue;
-
-      const { data: serverData } = await axios.get(`${baseUrl}/ajax/server?get=${serverCode}`, {
-        headers: { ...DEFAULT_HEADERS, 'X-Requested-With': 'XMLHttpRequest' },
-        timeout: 5000,
-      });
-
-      let embedUrl: string | null = serverData?.result?.url ?? null;
-      if (!embedUrl) continue;
-
-      if (embedUrl.includes('#')) {
-        try {
-          const encoded = embedUrl.split('#')[1];
-          embedUrl = Buffer.from(encoded, 'base64').toString('utf-8');
-        } catch (_) {}
-      }
-
-      const referer = 'https://kwik.cx2.mewcdn.online/';
-      const tracks = await parseM3u8Subtitles(embedUrl, referer);
-      return { m3u8: embedUrl, referer, tracks };
-    } catch (err) {
-      console.error(`[extractKiwiMapper] ${mapperBase} failed:`, err instanceof Error ? err.message : err);
-    }
+  // Race all mapper URLs in parallel — use whichever responds successfully first
+  try {
+    return await Promise.any(
+      KIWI_MAPPER_URLS.map((mapperBase) =>
+        _tryKiwiMapperUrl(mapperBase, malId, epNum, timestamp, type, baseUrl)
+      )
+    );
+  } catch (err) {
+    // AggregateError: all URLs failed
+    const msg = err instanceof AggregateError
+      ? err.errors.map((e: Error) => e?.message).join('; ')
+      : (err instanceof Error ? err.message : String(err));
+    console.error(`[extractKiwiMapper] All mapper URLs failed (${type}):`, msg);
+    return null;
   }
-
-  return null;
 }
 
 export async function extractVidstream(

@@ -1,4 +1,4 @@
-import { scrapeWatchStream, WatchData } from '@/lib/scrapers/watch.scraper';
+import { scrapeWatchStream, scrapeWatch, WatchData } from '@/lib/scrapers/watch.scraper';
 import { cacheGet, cacheSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
 
@@ -18,6 +18,7 @@ export const dynamic = 'force-dynamic';
  *     4. data: { "type": "done" }                               — stream closed; result cached
  *
  * Add ?refresh=1 to bypass cache and force a fresh stream.
+ * Add ?stream=false to disable streaming and return full JSON response.
  */
 export async function GET(
   req: Request,
@@ -29,6 +30,7 @@ export async function GET(
     const slug = resolvedParams.slug;
     const epNum = searchParams.get('ep') || '1';
     const refresh = searchParams.get('refresh') === '1';
+    const isStream = searchParams.get('stream') !== 'false';
 
     if (!slug) {
       return Response.json({ ok: false, message: 'Missing slug' }, { status: 400 });
@@ -42,6 +44,13 @@ export async function GET(
       if (cached !== undefined) {
         return Response.json({ ok: true, data: cached, streaming: false });
       }
+    }
+
+    // ── Non-streaming response: wait for all chunks and return JSON ──────────
+    if (!isStream) {
+      const data = await scrapeWatch(slug, epNum);
+      cacheSet(cacheKey, data, CACHE_TTL.EPISODE);
+      return Response.json({ ok: true, data, streaming: false });
     }
 
     // ── Cache miss (or forced refresh): stream the response as SSE ────────────

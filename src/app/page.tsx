@@ -77,18 +77,26 @@ export default function DocsPage() {
       const res = await fetch(url, { method: method.toUpperCase() });
       let data: unknown;
       // Always read as text first to avoid "body stream already read" errors.
-      // The watch endpoint returns NDJSON (application/x-ndjson) — collect all
-      // chunks and present them as an array of parsed objects.
+      // If Content-Type is text/event-stream, parse standard SSE formatted chunks starting with "data: ".
       const rawText = await res.text();
       const contentType = res.headers.get('content-type') ?? '';
-      if (contentType.includes('x-ndjson') || contentType.includes('ndjson')) {
-        // Parse each non-empty line as a JSON object
+      if (contentType.includes('text/event-stream')) {
         data = rawText
           .split('\n')
-          .filter((l) => l.trim())
-          .map((l) => { try { return JSON.parse(l); } catch { return l; } });
+          .filter((l) => l.startsWith('data: '))
+          .map((l) => {
+            try {
+              return JSON.parse(l.slice(6));
+            } catch {
+              return l.slice(6);
+            }
+          });
       } else {
-        try { data = JSON.parse(rawText); } catch { data = rawText; }
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          data = rawText;
+        }
       }
       setTestResponse({ status: res.status, data, loading: false });
 

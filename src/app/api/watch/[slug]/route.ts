@@ -11,11 +11,11 @@ export const dynamic = 'force-dynamic';
  *
  * Behaviour:
  * - Cache warm  → instant JSON response  { ok: true, data, streaming: false }
- * - Cache cold  → NDJSON streaming response; chunks arrive progressively:
- *     1. { "type": "episode", "episode": {...} }          — after ~1 upstream RTT
- *     2. { "type": "servers", "servers": [...] }          — after ~2 upstream RTTs
- *     3. { "type": "source",  "source": {...} }  (×N)    — as each server resolves
- *     4. { "type": "done" }                               — stream closed; result cached
+ * - Cache cold  → SSE streaming response (text/event-stream); chunks arrive progressively:
+ *     1. data: { "type": "episode", "episode": {...} }          — after ~1 upstream RTT
+ *     2. data: { "type": "servers", "servers": [...] }          — after ~2 upstream RTTs
+ *     3. data: { "type": "source",  "source": {...} }  (×N)    — as each server resolves
+ *     4. data: { "type": "done" }                               — stream closed; result cached
  *
  * Add ?refresh=1 to bypass cache and force a fresh stream.
  */
@@ -44,7 +44,7 @@ export async function GET(
       }
     }
 
-    // ── Cache miss (or forced refresh): stream the response as NDJSON ─────────
+    // ── Cache miss (or forced refresh): stream the response as SSE ────────────
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
@@ -55,8 +55,8 @@ export async function GET(
 
         try {
           for await (const chunk of scrapeWatchStream(slug, epNum)) {
-            // Forward each chunk as a newline-delimited JSON line
-            controller.enqueue(encoder.encode(JSON.stringify(chunk) + '\n'));
+            // Forward each chunk in SSE format
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
 
             // Accumulate data to cache when complete
             if (chunk.type === 'episode') {
@@ -77,7 +77,7 @@ export async function GET(
           const message = err instanceof Error ? err.message : 'Unknown error';
           console.error(`[GET /api/watch stream]`, message);
           controller.enqueue(
-            encoder.encode(JSON.stringify({ type: 'error', ok: false, message }) + '\n')
+            encoder.encode(`data: ${JSON.stringify({ type: 'error', ok: false, message })}\n\n`)
           );
         } finally {
           controller.close();
@@ -87,10 +87,11 @@ export async function GET(
 
     return new Response(stream, {
       headers: {
-        'Content-Type': 'application/x-ndjson; charset=utf-8',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
         'Transfer-Encoding': 'chunked',
         'X-Accel-Buffering': 'no', // Disable Nginx/proxy buffering
-        'Cache-Control': 'no-cache',
       },
     });
   } catch (err: unknown) {

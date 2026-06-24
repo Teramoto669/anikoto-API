@@ -64,7 +64,7 @@ export type WatchStreamChunk =
   | WatchStreamDone;
 
 /** Cap individual server fetch+extraction so a single slow server can't block everything. */
-const SERVER_TIMEOUT_MS = 15000;
+const SERVER_TIMEOUT_MS = 8000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
@@ -151,15 +151,22 @@ function buildSourceTasks(
 
           let extracted: Awaited<ReturnType<typeof extractStreamUrl>> = null;
           if (isVidstreamLike) {
-            // Race VidStream extractor and standard extractor in parallel
-            const [vidstreamResult, standardResult] = await Promise.allSettled([
-              extractVidstream(embedUrl, epReferer),
-              extractStreamUrl(embedUrl),
-            ]);
-            extracted =
-              (vidstreamResult.status === 'fulfilled' && vidstreamResult.value) ||
-              (standardResult.status === 'fulfilled' && standardResult.value) ||
-              null;
+            // Race VidStream extractor and standard extractor using Promise.any
+            // so we return the first successful result immediately without waiting for the slow/timing out one
+            try {
+              extracted = await Promise.any([
+                extractVidstream(embedUrl, epReferer).then((res) => {
+                  if (!res) throw new Error('No result');
+                  return res;
+                }),
+                extractStreamUrl(embedUrl).then((res) => {
+                  if (!res) throw new Error('No result');
+                  return res;
+                }),
+              ]);
+            } catch {
+              extracted = null;
+            }
           } else {
             extracted = await extractStreamUrl(embedUrl);
           }

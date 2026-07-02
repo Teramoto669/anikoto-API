@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>Anikoto Scraper API</h1>
+  <h1>Anikoto API</h1>
   
   <p><strong>A high-performance REST API for scraping anime data from anikoto.net, built with Next.js 16</strong></p>
 

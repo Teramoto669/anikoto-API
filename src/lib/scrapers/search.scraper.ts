@@ -52,10 +52,36 @@ function parseAnimeGrid($: cheerio.CheerioAPI, selector: string): AnimeCard[] {
 
 // ─── Search ───────────────────────────────────────────────────────────────────
 
-export async function scrapeSearch(keyword: string): Promise<SearchResult> {
-  const $ = await fetchPage(`/filter?keyword=${encodeURIComponent(keyword)}`);
+export async function scrapeSearch(keyword: string, page = 1): Promise<SearchResult> {
+  const url = page > 1 
+    ? `/filter?keyword=${encodeURIComponent(keyword)}&page=${page}`
+    : `/filter?keyword=${encodeURIComponent(keyword)}`;
+  const $ = await fetchPage(url);
   const results = parseAnimeGrid($, '.items.flw-wrap .film_list-wrap .flw-item, .film_list-wrap .flw-item, .ani.items .item, section .items .item');
-  return { results, keyword };
+  
+  const currentPage = page;
+  const hasNextPage =
+    $('.paging .next:not(.disabled), .pagination .next:not(.disabled)').length > 0 ||
+    $('.pagination a[rel="next"], .paging a[rel="next"], a[rel="next"]').length > 0;
+
+  let maxPage = currentPage;
+  const lastPageHref = $('.pagination a[title="Last"], .paging a[title="Last"]').attr('href');
+  if (lastPageHref) {
+    const match = lastPageHref.match(/page=(\d+)/);
+    if (match) {
+      maxPage = parseInt(match[1], 10);
+    }
+  } else {
+    $('.pagination a.page-link, .paging a.page-link, .pagination a.page-numbers, .paging a.page-numbers').each((_, el) => {
+      const pageText = $(el).text().trim();
+      const pageNum = parseInt(pageText, 10);
+      if (!isNaN(pageNum) && pageNum > maxPage) {
+        maxPage = pageNum;
+      }
+    });
+  }
+
+  return { results, keyword, currentPage, hasNextPage, maxPage };
 }
 
 // ─── Filter ───────────────────────────────────────────────────────────────────
@@ -91,7 +117,24 @@ export async function scrapeFilter(params: FilterParams): Promise<FilterResult> 
     $('.paging .next:not(.disabled), .pagination .next:not(.disabled)').length > 0 ||
     $('.pagination a[rel="next"], .paging a[rel="next"], a[rel="next"]').length > 0;
 
-  return { results, currentPage, hasNextPage, params };
+  let maxPage = currentPage;
+  const lastPageHref = $('.pagination a[title="Last"], .paging a[title="Last"]').attr('href');
+  if (lastPageHref) {
+    const match = lastPageHref.match(/page=(\d+)/);
+    if (match) {
+      maxPage = parseInt(match[1], 10);
+    }
+  } else {
+    $('.pagination a.page-link, .paging a.page-link, .pagination a.page-numbers, .paging a.page-numbers').each((_, el) => {
+      const pageText = $(el).text().trim();
+      const pageNum = parseInt(pageText, 10);
+      if (!isNaN(pageNum) && pageNum > maxPage) {
+        maxPage = pageNum;
+      }
+    });
+  }
+
+  return { results, currentPage, hasNextPage, maxPage, params };
 }
 
 // ─── Listing pages (Latest/Popular/Ongoing etc.) ──────────────────────────────

@@ -78,6 +78,14 @@ const spec = {
             description: "Set to 1 to bypass cache",
             schema: { type: "string", enum: ["1"] },
           },
+          {
+            name: "page",
+            in: "query",
+            required: false,
+            description: "Page number (default: 1)",
+            schema: { type: "integer" },
+            example: "1",
+          },
         ],
         responses: {
           "200": {
@@ -94,6 +102,9 @@ const spec = {
                       properties: {
                         keyword: { type: "string" },
                         totalResults: { type: "integer" },
+                        currentPage: { type: "integer" },
+                        hasNextPage: { type: "boolean" },
+                        maxPage: { type: "integer" },
                         results: { type: "array", items: { $ref: "AnimeCard" } },
                       },
                     },
@@ -185,6 +196,7 @@ const spec = {
                         results: { type: "array", items: { $ref: "AnimeCard" } },
                         currentPage: { type: "integer" },
                         hasNextPage: { type: "boolean" },
+                        maxPage: { type: "integer" },
                       },
                     },
                   },

@@ -101,6 +101,14 @@ paths:
             type: string
             example: one piece
         - $ref: '#/components/parameters/refresh'
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
       responses:
         '200':
           description: Search results
@@ -866,6 +874,12 @@ components:
             $ref: '#/components/schemas/AnimeCard'
         keyword:
           type: string
+        currentPage:
+          type: integer
+        hasNextPage:
+          type: boolean
+        maxPage:
+          type: integer
         totalResults:
           type: integer
 
@@ -880,6 +894,8 @@ components:
           type: integer
         hasNextPage:
           type: boolean
+        maxPage:
+          type: integer
         params:
           type: object
 

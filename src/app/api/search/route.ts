@@ -22,6 +22,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const keyword = searchParams.get('keyword')?.trim();
     const refresh = searchParams.get('refresh') === '1';
+    const page = parseInt(searchParams.get('page') || '1', 10);
 
     if (!keyword) {
       return NextResponse.json(
@@ -30,10 +31,10 @@ export async function GET(req: Request) {
       );
     }
 
-    const key = `search:${keyword.toLowerCase()}`;
+    const key = `search:${keyword.toLowerCase()}:page:${page}`;
     const data = refresh
-      ? await scrapeSearch(keyword)
-      : await getOrSet(key, () => scrapeSearch(keyword), CACHE_TTL.SEARCH);
+      ? await scrapeSearch(keyword, page)
+      : await getOrSet(key, () => scrapeSearch(keyword, page), CACHE_TTL.SEARCH);
 
     return NextResponse.json({ ok: true, data });
   } catch (err: unknown) {

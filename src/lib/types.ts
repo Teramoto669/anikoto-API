@@ -149,6 +149,9 @@ export interface AnimeEpisodes {
 export interface SearchResult {
   results: AnimeCard[];
   keyword: string;
+  currentPage?: number;
+  hasNextPage?: boolean;
+  maxPage?: number;
   totalResults?: number;
 }
 
@@ -180,6 +183,7 @@ export interface FilterResult {
   results: AnimeCard[];
   currentPage: number;
   hasNextPage: boolean;
+  maxPage?: number;
   params: FilterParams;
   options?: FilterOptions;
 }

@@ -1,36 +1,8 @@
 import * as cheerio from 'cheerio';
-import { fetchJson, fetchPage } from '../fetcher';
+import { fetchJson } from '../fetcher';
 import { ScheduleDay, AnimeCard } from '../types';
-import { getOrSet } from '../cache';
 
 const SECONDS_PER_DAY = 86_400;
-
-/**
- * Fetch the poster image URL for a given anime slug.
- * Uses the search/filter page which returns HTML with the poster <img>.
- * Results are cached for 24 hours to avoid redundant requests.
- */
-async function fetchImageBySlug(slug: string): Promise<string> {
-  return getOrSet(
-    `schedule:img:${slug}`,
-    async () => {
-      try {
-        const $ = await fetchPage(`/filter?keyword=${encodeURIComponent(slug)}`);
-        // Try multiple selectors that may contain the poster image
-        const imgSrc =
-          $('.flw-item img').first().attr('src') ??
-          $('.item img').first().attr('src') ??
-          $('.poster img').first().attr('src') ??
-          $('img').first().attr('src') ??
-          '';
-        return imgSrc;
-      } catch {
-        return '';
-      }
-    },
-    86400 // 24 hours
-  );
-}
 
 /** Parse `.item` `<a>` elements from a container into AnimeCard[]. */
 function parseItems(
@@ -64,7 +36,7 @@ function parseItems(
       slug,
       title,
       titleJp: titleJp || undefined,
-      image: '', // Will be filled in after batch resolution
+      image: '',
       href: slug ? `/api/anime/${slug}` : href,
       type: epText || undefined,
       date: timeText || undefined,
@@ -118,20 +90,10 @@ export async function scrapeSchedule(tzOffset = 0, startDate?: Date): Promise<Sc
       fetchJson<{ status: number; result: string }>(
         `/ajax/schedule/date?tz=${tzOffset}&time=${timestamp}`
       )
-        .then(async ({ result }) => {
+        .then(({ result }) => {
           if (!result) return { day, animes: [] as AnimeCard[] };
           const $ = cheerio.load(result);
-          const animes = parseItems($('body'), $);
-
-          // Resolve images for all anime in this day in parallel
-          const images = await Promise.all(
-            animes.map((a) => (a.slug ? fetchImageBySlug(a.slug) : Promise.resolve('')))
-          );
-          animes.forEach((a, i) => {
-            if (images[i]) a.image = images[i];
-          });
-
-          return { day, animes };
+          return { day, animes: parseItems($('body'), $) };
         })
         .catch(() => ({ day, animes: [] as AnimeCard[] }))
     )

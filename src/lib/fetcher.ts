@@ -5,10 +5,13 @@ import { BASE_URL, DEFAULT_HEADERS } from './constants';
 /**
  * Fetch an HTML page from anikototv.to and return a Cheerio instance.
  */
-export async function fetchPage(path: string): Promise<cheerio.CheerioAPI> {
+export async function fetchPage(path: string, extraHeaders?: Record<string, string>): Promise<cheerio.CheerioAPI> {
   const url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
   const { data } = await axios.get(url, {
-    headers: DEFAULT_HEADERS,
+    headers: {
+      ...DEFAULT_HEADERS,
+      ...extraHeaders,
+    },
     timeout: 15_000,
   });
   return cheerio.load(data);

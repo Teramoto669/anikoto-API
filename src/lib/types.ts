@@ -215,3 +215,25 @@ export interface ApiError {
 }
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiError;
+
+// ─── Tooltip ─────────────────────────────────────────────────────────────────
+
+export interface AnimeTooltip {
+  id: string;
+  slug: string;
+  title: string;
+  titleJp?: string;
+  rating?: string;
+  quality?: string;
+  episodes?: EpisodeStatus;
+  synopsis?: string;
+  otherNames?: string;
+  score?: number;
+  year?: string;
+  duration?: string;
+  status?: string;
+  genres?: string[];
+  watchUrl?: string;
+  href?: string;
+}
+

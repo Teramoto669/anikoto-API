@@ -372,6 +372,82 @@ const spec = {
       },
     },
 
+    "/anime/tooltip/{id}": {
+      get: {
+        tags: ["Anime"],
+        summary: "Get anime tooltip info by ID",
+        description: "Fetches and parses the preview/tooltip HTML containing title, synopsis, year, scores, genres, and more for a given anime ID.",
+        operationId: "getAnimeTooltip",
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "Anime ID (data-tip attribute of the anime poster)",
+            schema: { type: "string" },
+            example: "4127",
+          },
+          {
+            name: "refresh",
+            in: "query",
+            required: false,
+            description: "Set to 1 to bypass cache",
+            schema: { type: "string", enum: ["1"] },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Anime tooltip info",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ok: { type: "boolean", example: true },
+                    cached: { type: "boolean" },
+                    data: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string", example: "4127" },
+                        slug: { type: "string", example: "that-time-i-got-reincarnated-as-a-slime-tales-veldora-s-journal-ngovq" },
+                        title: { type: "string", example: "That Time I Got Reincarnated as a Slime: Tales - Veldora's Journal" },
+                        titleJp: { type: "string", example: "Tensei shitara Slime Datta Ken: Kanwa - Veldora Nikki" },
+                        rating: { type: "string", example: "PG-13" },
+                        quality: { type: "string", example: "HD" },
+                        episodes: {
+                          type: "object",
+                          properties: {
+                            sub: { type: "integer", nullable: true, example: null },
+                            dub: { type: "integer", nullable: true, example: null },
+                            total: { type: "integer", nullable: true, example: null },
+                          },
+                        },
+                        synopsis: { type: "string", example: "Ifrit, who has been trapped in Rimuru due to the latter's Predator skill..." },
+                        otherNames: { type: "string", example: "That Time I Got Reincarnated as a Slime..." },
+                        score: { type: "number", example: 6.48 },
+                        year: { type: "string", example: "?" },
+                        duration: { type: "string", example: "23m min" },
+                        status: { type: "string", example: "Finished Airing" },
+                        genres: {
+                          type: "array",
+                          items: { type: "string" },
+                          example: ["Fantasy", "Comedy", "Shounen"],
+                        },
+                        watchUrl: { type: "string", example: "https://anikoto.net/watch/that-time-i-got-reincarnated-as-a-slime-tales-veldora-s-journal-ngovq" },
+                        href: { type: "string", example: "/api/anime/that-time-i-got-reincarnated-as-a-slime-tales-veldora-s-journal-ngovq" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "404": { description: "Anime tooltip not found" },
+          "500": { description: "Internal server error" },
+        },
+      },
+    },
+
     "/latest": {
       get: {
         tags: ["Browse"],

@@ -17,10 +17,14 @@ function parseCardEpisodeStatus($el: cheerio.Cheerio<AnyNode>): EpisodeStatus {
   return status;
 }
 
-function parseAnimeGrid($: cheerio.CheerioAPI, selector: string): AnimeCard[] {
+function parseAnimeGrid($: cheerio.CheerioAPI, selector: string, excludeSidebar = false): AnimeCard[] {
   const results: AnimeCard[] = [];
   $(selector).each((_, el) => {
     const $el = $(el);
+    if (excludeSidebar && $el.closest('.sidebar, #sidebar, #top-anime, .top-anime').length > 0) {
+      return;
+    }
+
     const href = $el.attr('href') ?? $el.find('a').first().attr('href') ?? '';
     const slug = href.replace(/^https?:\/\/[^/]+/, '').replace(/^\/watch\//, '').replace(/\/ep-\d+$/, '').replace(/\/$/, '');
     const $poster = $el.find('.poster, [data-tip]').first();
@@ -32,13 +36,14 @@ function parseAnimeGrid($: cheerio.CheerioAPI, selector: string): AnimeCard[] {
     }).text().replace(/[^0-9]/g, '').trim();
 
     const yearText = $el.find('.meta .dot').last().text().trim();
+    const image = $el.find('img').first().attr('src') ?? '';
 
     results.push({
       id,
       slug,
       title: $el.find('.name, .d-title').first().text().trim(),
       titleJp: $el.find('.name, .d-title').first().attr('data-jp')?.trim(),
-      image: $el.find('img').first().attr('src') ?? '',
+      image,
       href: `/api/anime/${slug}`,
       type: $el.find('.meta .dot:not(.ep-wrap):not(.score)').first().text().trim() || undefined,
       episodes: parseCardEpisodeStatus($el),
@@ -57,7 +62,7 @@ export async function scrapeSearch(keyword: string, page = 1): Promise<SearchRes
     ? `/filter?keyword=${encodeURIComponent(keyword)}&page=${page}`
     : `/filter?keyword=${encodeURIComponent(keyword)}`;
   const $ = await fetchPage(url);
-  const results = parseAnimeGrid($, '.items.flw-wrap .film_list-wrap .flw-item, .film_list-wrap .flw-item, .ani.items .item, section .items .item');
+  const results = parseAnimeGrid($, '.items.flw-wrap .film_list-wrap .flw-item, .film_list-wrap .flw-item, .ani.items .item, section .items .item', true);
   
   const currentPage = page;
   const hasNextPage =
@@ -109,7 +114,8 @@ export async function scrapeFilter(params: FilterParams): Promise<FilterResult> 
   // Try multiple selectors since the site may vary
   const results = parseAnimeGrid(
     $,
-    '.film_list-wrap .flw-item, .ani.items .item, .items.flw-wrap .flw-item, #list-items .item, .page-content .item'
+    '.film_list-wrap .flw-item, .ani.items .item, .items.flw-wrap .flw-item, #list-items .item, .page-content .item',
+    true
   );
 
   const currentPage = parseInt(params.page ?? '1', 10);
@@ -134,7 +140,22 @@ export async function scrapeFilter(params: FilterParams): Promise<FilterResult> 
     });
   }
 
-  return { results, currentPage, hasNextPage, hasPreviousPage: currentPage > 1, maxPage, minPage: 1, params };
+  const topRated = parseAnimeGrid(
+    $,
+    'aside.sidebar .item, .sidebar .item, #body .scaff.side.items.md .item',
+    false
+  );
+
+  return {
+    results,
+    topRated: topRated.length > 0 ? topRated : undefined,
+    currentPage,
+    hasNextPage,
+    hasPreviousPage: currentPage > 1,
+    maxPage,
+    minPage: 1,
+    params,
+  };
 }
 
 // ─── Listing pages (Latest/Popular/Ongoing etc.) ──────────────────────────────
@@ -142,18 +163,50 @@ export async function scrapeFilter(params: FilterParams): Promise<FilterResult> 
 export async function scrapeListingPage(
   path: string,
   page = 1
-): Promise<{ results: AnimeCard[]; currentPage: number; hasNextPage: boolean; hasPreviousPage: boolean; minPage?: number }> {
+): Promise<{ results: AnimeCard[]; topRated?: AnimeCard[]; currentPage: number; hasNextPage: boolean; hasPreviousPage: boolean; minPage?: number; maxPage?: number }> {
   const url = page > 1 ? `${path}?page=${page}` : path;
   const $ = await fetchPage(url);
 
   const results = parseAnimeGrid(
     $,
-    '.film_list-wrap .flw-item, .ani.items .item, .items .item, .page-content .item'
+    '.film_list-wrap .flw-item, .ani.items .item, .items .item, .page-content .item',
+    true
+  );
+
+  const topRated = parseAnimeGrid(
+    $,
+    'aside.sidebar .item, .sidebar .item, #body .scaff.side.items.md .item',
+    false
   );
 
   const hasNextPage =
     $('.paging .next:not(.disabled), .pagination .next:not(.disabled)').length > 0 ||
     $('.pagination a[rel="next"], .paging a[rel="next"], a[rel="next"]').length > 0;
 
-  return { results, currentPage: page, hasNextPage, hasPreviousPage: page > 1, minPage: 1 };
+  let maxPage = page;
+  const lastPageHref = $('.pagination a[title="Last"], .paging a[title="Last"]').attr('href');
+  if (lastPageHref) {
+    const match = lastPageHref.match(/page=(\d+)/);
+    if (match) {
+      maxPage = parseInt(match[1], 10);
+    }
+  } else {
+    $('.pagination a.page-link, .paging a.page-link, .pagination a.page-numbers, .paging a.page-numbers').each((_, el) => {
+      const pageText = $(el).text().trim();
+      const pageNum = parseInt(pageText, 10);
+      if (!isNaN(pageNum) && pageNum > maxPage) {
+        maxPage = pageNum;
+      }
+    });
+  }
+
+  return {
+    results,
+    topRated: topRated.length > 0 ? topRated : undefined,
+    currentPage: page,
+    hasNextPage,
+    hasPreviousPage: page > 1,
+    minPage: 1,
+    maxPage,
+  };
 }

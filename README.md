@@ -33,7 +33,7 @@
 
 ## ✨ Features
 
-- 12 REST endpoints covering home, search, filter, anime detail, episodes, schedule, streaming sources, and a streaming proxy
+- 13 REST endpoints covering home, search, filter, anime detail, episodes, tooltip, schedule, streaming sources, and a streaming proxy
 - Response envelope — every response is `{ ok: true, data: ... }` or `{ ok: false, message: "..." }`
 - In-memory cache (TTL per endpoint) — add `?refresh=1` to any request to bypass
 - Interactive **Swagger UI** docs at `/` powered by an OpenAPI 3.0 spec (`public/openapi.yaml`)
@@ -60,19 +60,20 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/api/home` | Home data: spotlight, latest eps, top anime |
-| GET | `/api/search?keyword=` | Search anime by keyword |
-| GET | `/api/filter` | Advanced multi-param filter |
+| GET | `/api/search?keyword=&page=` | Search anime by keyword (paginated) |
+| GET | `/api/filter` | Advanced multi-param filter (paginated, returns `results` & optional `topRated`) |
 | GET | `/api/anime/:slug` | Anime detail info |
 | GET | `/api/anime/:slug/episodes` | Episode list (with range filter) |
-| GET | `/api/latest` | Latest / popular anime listing |
-| GET | `/api/status` | Browse by airing status |
-| GET | `/api/genre/:genre` | Browse by genre |
-| GET | `/api/type/:type` | Browse by media type |
-| GET | `/api/schedule` | Weekly airing schedule |
+| GET | `/api/anime/tooltip/:id` | Anime tooltip / preview info (by poster's `data-tip` ID) |
+| GET | `/api/latest?type=&page=` | Paginated listings: `latest-updated`, `new-release`, `most-viewed` (returns `results` & optional `topRated`) |
+| GET | `/api/status?type=&page=` | Airing status listing: `currently-airing`, `finished-airing`, `not-yet-aired` (returns `results` & optional `topRated`) |
+| GET | `/api/genre/:genre?page=` | Browse by genre slug (returns `results` & optional `topRated`) |
+| GET | `/api/type/:type?page=` | Browse by media type: `tv`, `movie`, `ova`, `ona`, `special`, `music` (returns `results` & optional `topRated`) |
+| GET | `/api/schedule?tz=&images=` | Weekly airing schedule (optional UTC tz offset in hours and image resolution) |
 | GET | `/api/watch/:slug?ep=` | Streaming sources (m3u8 + subs) |
 | GET | `/api/proxy?url=` | Streaming proxy (CORS bypass) |
 
-See the **full interactive documentation** at [`/`](https://anikoto-scrap-api.vercel.app) or in [`public/openapi.yaml`](./public/openapi.yaml).
+See the **full interactive documentation** at `/` (when running locally) or in [`public/openapi.yaml`](./public/openapi.yaml).
 
 ---
 
@@ -81,13 +82,16 @@ See the **full interactive documentation** at [`/`](https://anikoto-scrap-api.ve
 | Endpoint | TTL |
 |----------|-----|
 | `/api/home` | 5 minutes |
-| `/api/anime/:slug` | 30 minutes |
+| `/api/anime/:slug` / `/api/anime/tooltip/:id` | 30 minutes |
 | `/api/search` | 2 minutes |
 | `/api/filter` | 5 minutes |
 | `/api/schedule` | 1 hour |
 | Episodes | 10 minutes |
 
 Add `?refresh=1` to force a fresh scrape.
+
+> [!TIP]
+> **Schedule Images:** By default, `/api/schedule` returns an empty string for anime images to keep response times fast (fetching schedule images requires visiting each anime details page). Setting `images=true` will concurrently fetch the poster images for all listed anime with a global concurrency limit of 5.
 
 ---
 
@@ -121,6 +125,7 @@ src/
 │       ├── search/       # GET /api/search
 │       ├── filter/       # GET /api/filter
 │       ├── anime/        # GET /api/anime/:slug (+ /episodes)
+│       │   └── tooltip/  # GET /api/anime/tooltip/:id
 │       ├── latest/       # GET /api/latest
 │       ├── status/       # GET /api/status
 │       ├── genre/        # GET /api/genre/:genre
@@ -136,6 +141,12 @@ src/
 │   ├── fetcher.ts        # Axios-based HTML fetcher
 │   ├── extractors.ts     # Cheerio extraction helpers
 │   └── scrapers/         # Per-endpoint scraping logic
+│       ├── anime.scraper.ts
+│       ├── home.scraper.ts
+│       ├── schedule.scraper.ts
+│       ├── search.scraper.ts
+│       ├── tooltip.scraper.ts
+│       └── watch.scraper.ts
 public/
 └── openapi.yaml          # OpenAPI 3.0 specification
 ```

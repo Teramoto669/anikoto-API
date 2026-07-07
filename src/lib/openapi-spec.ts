@@ -350,6 +350,7 @@ const spec = {
                             type: "object",
                             properties: {
                               id: { type: "string" },
+                              malId: { type: "string" },
                               title: { type: "string" },
                               titleJp: { type: "string" },
                               image: { type: "string" },

@@ -88,6 +88,7 @@ export interface HomeData {
 
 export interface RelatedAnime {
   id?: string;
+  malId?: string;
   title: string;
   titleJp?: string;
   image: string;

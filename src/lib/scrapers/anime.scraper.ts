@@ -12,7 +12,8 @@ function parseRelated($: cheerio.CheerioAPI, currentSlug?: string): RelatedAnime
 
   $('#w-related .item.flexserieslist').each((_, el) => {
     const $el = $(el);
-    const id = $el.attr('data-id') ?? undefined;
+    const malId = $el.attr('data-id') ?? undefined;
+    const id = $el.find('.poster').attr('data-tip') ?? undefined;
 
     const $posterLink = $el.find('.poster a');
     const href = $posterLink.attr('href') ?? '';
@@ -47,6 +48,7 @@ function parseRelated($: cheerio.CheerioAPI, currentSlug?: string): RelatedAnime
 
     relatedList.push({
       id,
+      malId,
       title,
       titleJp,
       image,

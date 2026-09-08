@@ -1,5 +1,3 @@
-// ── Cloudflare Worker High-Volume Production Proxy ──────────────────────────
-
 const BROWSER_FINGERPRINTS = [
   {
     'User-Agent':

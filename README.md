@@ -34,6 +34,7 @@
 ## ✨ Features
 
 - 15 REST endpoints covering home, search, filter, anime detail, episodes, related, recommendations, tooltip, schedule, streaming sources (with opening/ending skip ranges), and a streaming proxy
+- **High-Volume Proxy Engine**: Zero-copy `ReadableStream` video proxying, multi-node outbound proxy pool routing (`PROXIES` / `PROXY_LIST`), SSRF protection, anti-bot browser header rotation, and exponential backoff retries.
 - Response envelope — every response is `{ ok: true, data: ... }` or `{ ok: false, message: "..." }`
 - In-memory cache (TTL per endpoint) — add `?refresh=1` to any request to bypass
 - Interactive **Swagger UI** docs at `/` powered by an OpenAPI 3.0 spec (`public/openapi.yaml`)
@@ -74,7 +75,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 | GET | `/api/type/:type?page=` | Browse by media type: `tv`, `movie`, `ova`, `ona`, `special`, `music` (returns `results` & optional `topRated`) |
 | GET | `/api/schedule?tz=&images=` | Weekly airing schedule (optional UTC tz offset in hours and image resolution) |
 | GET | `/api/watch/:slug?ep=` | Streaming sources (m3u8, subtitles, and opening/ending skip ranges) |
-| GET | `/api/proxy?url=` | Streaming proxy (CORS bypass) |
+| GET | `/api/proxy?url=` | High-volume streaming proxy (CORS bypass, zero-copy streaming, proxy routing) |
 
 See the **full interactive documentation** at `/` (when running locally) or in [`public/openapi.yaml`](./public/openapi.yaml).
 
@@ -114,6 +115,9 @@ CORS_ALLOWED_ORIGIN=http://localhost:3000,https://your-app.vercel.app
 
 # Optional: Cloudflare Worker URL for streaming proxy
 CF_WORKER_URL=https://your-worker-name.workers.dev
+
+# Optional: Comma-separated list of HTTP/HTTPS/SOCKS proxies for outbound routing
+PROXIES=http://user:pass@node1.proxy.com:8080,http://node2.proxy.com:8080
 ```
 
 ---
@@ -133,6 +137,11 @@ By default, the API provides an internal streaming proxy at `/api/proxy` to bypa
    CF_WORKER_URL=https://your-worker-name.workers.dev
    ```
    *Note: When this environment variable is set, the `/api/watch` endpoint will automatically return proxy URLs pointing to your Cloudflare Worker instead of the internal `/api/proxy`.*
+3. (Optional) Configure outbound proxy rotation for Cloudflare Worker:
+   ```bash
+   npx wrangler secret put PROXIES
+   # Enter comma-separated proxy list: http://user:pass@node1:8080,http://node2:8080
+   ```
 
 ---
 
@@ -158,10 +167,11 @@ src/
 │       ├── watch/        # GET /api/watch/:slug
 │       └── proxy/        # GET /api/proxy
 ├── lib/
+│   ├── proxy-pool.ts     # Proxy pool manager & SSRF guard
 │   ├── types.ts          # TypeScript interfaces
 │   ├── constants.ts      # Base URL, cache TTLs, filter options
 │   ├── cache.ts          # Node-Cache instance
-│   ├── fetcher.ts        # Axios-based HTML fetcher
+│   ├── fetcher.ts        # Axios & proxy pool based HTML fetcher
 │   ├── extractors.ts     # Cheerio extraction helpers
 │   └── scrapers/         # Per-endpoint scraping logic
 │       ├── anime.scraper.ts

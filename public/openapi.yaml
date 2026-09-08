@@ -19,10 +19,11 @@ info:
     |----------|-----|
     | `/api/home` | 5 minutes |
     | `/api/anime/:slug` | 30 minutes |
+    | `/api/anime/tooltip/:id` | 30 minutes |
     | `/api/search` | 2 minutes |
     | `/api/filter` | 5 minutes |
     | `/api/schedule` | 1 hour |
-    | Episodes | 10 minutes |
+    | `/api/watch/:slug` (Episodes) | 10 minutes |
 
     Add `?refresh=1` to any cached endpoint to bypass the cache.
   version: "1.0.0"
@@ -37,15 +38,15 @@ servers:
 
 tags:
   - name: Home
-    description: Homepage data
+    description: Homepage and widget data
   - name: Anime
-    description: Anime detail and episodes
+    description: Anime detail, episodes, recommendations, related, and tooltip
   - name: Browse
-    description: Browse, filter and search
+    description: Browse, filter, search, widgets, and listings
   - name: Schedule
     description: Weekly airing schedule
   - name: Watch
-    description: Streaming sources and proxy
+    description: Streaming sources, SSE streaming, and proxy
 
 paths:
   /home:
@@ -53,9 +54,25 @@ paths:
       tags: [Home]
       summary: Homepage data
       description: >
-        Returns spotlight carousel, latest episodes, new release, top anime by day/week/month.
+        Returns spotlight carousel, latest episodes, new release, and top anime by day / week / month.
+        Optionally returns dynamic widget data if `widget` parameter is provided.
       operationId: getHome
       parameters:
+        - name: widget
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [updated-all, updated-sub, updated-dub, trending, random]
+          description: Optional widget name to fetch widget data instead of full home data
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number for widget data
         - $ref: '#/components/parameters/refresh'
       responses:
         '200':
@@ -71,7 +88,9 @@ paths:
                   cached:
                     type: boolean
                   data:
-                    $ref: '#/components/schemas/HomeData'
+                    oneOf:
+                      - $ref: '#/components/schemas/HomeData'
+                      - $ref: '#/components/schemas/HomeWidgetResult'
               example:
                 ok: true
                 cached: false
@@ -91,6 +110,7 @@ paths:
     get:
       tags: [Browse]
       summary: Search anime by keyword
+      description: Search anime by keyword. Returns paginated list of matching anime cards.
       operationId: searchAnime
       parameters:
         - name: keyword
@@ -100,7 +120,6 @@ paths:
           schema:
             type: string
             example: one piece
-        - $ref: '#/components/parameters/refresh'
         - name: page
           in: query
           required: false
@@ -109,6 +128,7 @@ paths:
             minimum: 1
             default: 1
           description: Page number
+        - $ref: '#/components/parameters/refresh'
       responses:
         '200':
           description: Search results
@@ -130,6 +150,11 @@ paths:
                 data:
                   keyword: one piece
                   totalResults: 42
+                  currentPage: 1
+                  hasNextPage: true
+                  hasPreviousPage: false
+                  minPage: 1
+                  maxPage: 3
                   results: []
         '400':
           $ref: '#/components/responses/BadRequest'
@@ -140,7 +165,7 @@ paths:
     get:
       tags: [Browse]
       summary: Advanced anime filter
-      description: Filter anime with multiple combinable parameters.
+      description: Filter anime with multiple combinable parameters (genres, seasons, years, media types, airing status, languages, ratings, and sort order).
       operationId: filterAnime
       parameters:
         - name: keyword
@@ -149,6 +174,7 @@ paths:
           schema:
             type: string
           description: Search keyword
+          example: demon slayer
         - name: genre[]
           in: query
           required: false
@@ -157,7 +183,7 @@ paths:
             type: array
             items:
               type: string
-          description: "Genre ID. Example: 1 (Action), 2 (Adventure), 3 (Fantasy)"
+          description: "Genre ID or slug (e.g. 1, action, romance)"
         - name: season[]
           in: query
           required: false
@@ -241,6 +267,7 @@ paths:
             minimum: 1
             default: 1
           description: Page number
+        - $ref: '#/components/parameters/refresh'
       responses:
         '200':
           description: Filtered results
@@ -263,10 +290,28 @@ paths:
     get:
       tags: [Anime]
       summary: Anime detail
-      description: Get full anime info including title, synopsis, genres, studios, MAL score, episode count and status.
+      description: >
+        Get full anime info including title, synopsis, genres, studios, MAL score, episode count, and status.
+        Optionally filters the embedded episode list by range using `start` and `end` query parameters.
       operationId: getAnimeDetail
       parameters:
         - $ref: '#/components/parameters/slug'
+        - name: start
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Starting episode number to include (inclusive). Must be used together with `end`.
+          example: 1
+        - name: end
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Ending episode number to include (inclusive). Must be used together with `start`.
+          example: 12
         - $ref: '#/components/parameters/refresh'
       responses:
         '200':
@@ -294,6 +339,8 @@ paths:
                   status: Currently Airing
                   malScore: 8.9
                   genres: [Action, Adventure, Comedy]
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -307,7 +354,6 @@ paths:
       operationId: getAnimeEpisodes
       parameters:
         - $ref: '#/components/parameters/slug'
-        - $ref: '#/components/parameters/refresh'
         - name: start
           in: query
           required: false
@@ -322,6 +368,7 @@ paths:
             type: string
           description: Ending episode number (inclusive)
           example: "10"
+        - $ref: '#/components/parameters/refresh'
       responses:
         '200':
           description: Episode list
@@ -337,6 +384,8 @@ paths:
                     type: boolean
                   data:
                     $ref: '#/components/schemas/AnimeEpisodes'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
         '500':
@@ -404,6 +453,43 @@ paths:
         '500':
           $ref: '#/components/responses/Error'
 
+  /anime/tooltip/{id}:
+    get:
+      tags: [Anime]
+      summary: Get anime tooltip preview info by ID
+      description: Fetches and parses the preview/tooltip HTML containing title, synopsis, year, scores, genres, and metadata for a given anime ID (`data-tip` attribute).
+      operationId: getAnimeTooltip
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Anime ID from the `data-tip` attribute of an anime poster
+          example: "4127"
+        - $ref: '#/components/parameters/refresh'
+      responses:
+        '200':
+          description: Anime tooltip info
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  cached:
+                    type: boolean
+                  data:
+                    $ref: '#/components/schemas/AnimeTooltip'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/Error'
+
   /updated:
     get:
       tags: [Browse]
@@ -434,9 +520,7 @@ paths:
                   cached:
                     type: boolean
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/AnimeCard'
+                    $ref: '#/components/schemas/ListingResult'
         '500':
           $ref: '#/components/responses/Error'
 
@@ -444,7 +528,7 @@ paths:
     get:
       tags: [Browse]
       summary: Home widgets data
-      description: Fetch dynamic home widgets: updated-all (default), updated-sub, updated-dub, trending, random.
+      description: "Fetch dynamic home widgets: updated-all (default), updated-sub, updated-dub, trending, random."
       operationId: getWidgetData
       parameters:
         - name: name
@@ -459,7 +543,7 @@ paths:
               - updated-dub
               - trending
               - random
-          description: Widget name (default: updated-all)
+          description: "Widget name (default: updated-all)"
         - name: page
           in: query
           required: false
@@ -483,24 +567,7 @@ paths:
                   cached:
                     type: boolean
                   data:
-                    type: object
-                    properties:
-                      results:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/AnimeCard'
-                      currentPage:
-                        type: integer
-                        example: 1
-                      hasNextPage:
-                        type: boolean
-                        example: true
-                      hasPreviousPage:
-                        type: boolean
-                        example: false
-                      maxPage:
-                        type: integer
-                        example: 2
+                    $ref: '#/components/schemas/HomeWidgetResult'
         '500':
           $ref: '#/components/responses/Error'
 
@@ -508,6 +575,7 @@ paths:
     get:
       tags: [Browse]
       summary: Browse anime by airing status
+      description: Browse anime filtered by airing status (`currently-airing`, `finished-airing`, `not-yet-aired`).
       operationId: getByStatus
       parameters:
         - name: type
@@ -541,9 +609,9 @@ paths:
                   cached:
                     type: boolean
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/AnimeCard'
+                    $ref: '#/components/schemas/ListingResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/Error'
 
@@ -551,6 +619,7 @@ paths:
     get:
       tags: [Browse]
       summary: Browse anime by genre
+      description: Browse anime filtered by genre slug (e.g. action, romance, isekai, fantasy).
       operationId: getByGenre
       parameters:
         - name: genre
@@ -583,9 +652,9 @@ paths:
                   cached:
                     type: boolean
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/AnimeCard'
+                    $ref: '#/components/schemas/GenreListingResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/Error'
 
@@ -593,6 +662,7 @@ paths:
     get:
       tags: [Browse]
       summary: Browse anime by media type
+      description: Browse anime filtered by media type (`tv`, `movie`, `ova`, `ona`, `special`, `music`).
       operationId: getByType
       parameters:
         - name: type
@@ -626,9 +696,9 @@ paths:
                   cached:
                     type: boolean
                   data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/AnimeCard'
+                    $ref: '#/components/schemas/TypeListingResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/Error'
 
@@ -636,13 +706,38 @@ paths:
     get:
       tags: [Schedule]
       summary: Weekly airing schedule
-      description: Get the weekly airing schedule grouped by day of the week.
+      description: >
+        Get the 7-day weekly airing schedule starting from today (UTC).
+        Each day is fetched in parallel via the site's `/ajax/schedule/date` endpoint.
+        
+        AnimeCard fields repurposed for schedule items:
+        - `date`: Airing time in the requested timezone (e.g. `"21:00"`)
+        - `type`: Episode label (e.g. `"Episode 13"`)
+        - `image`: Resolved poster image URL (requires `images=true`)
       operationId: getSchedule
       parameters:
+        - name: tz
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: -12
+            maximum: 14
+            default: 0
+          description: UTC offset in hours (e.g. 7 for UTC+7, -5 for UTC-5). Affects the airing times in the `date` field.
+          example: 7
+        - name: images
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: Set to true to resolve and fetch poster images (defaults to false)
+          example: true
         - $ref: '#/components/parameters/refresh'
       responses:
         '200':
-          description: Weekly schedule
+          description: 7-day schedule grouped by day
           content:
             application/json:
               schema:
@@ -665,7 +760,11 @@ paths:
       tags: [Watch]
       summary: Streaming sources for an episode
       description: >
-        Returns available streaming servers and direct m3u8 URLs (with optional proxy & subtitles) for a specific episode.
+        Retrieves video servers and stream sources for a specific episode.
+        
+        **Dual Streaming & JSON Modes**:
+        - Default mode (or cold cache miss): Returns an SSE stream (`text/event-stream`) delivering chunks progressively (`episode`, `servers`, `source` x N, `done`).
+        - `stream=false` or cache hit: Returns a standard single JSON object containing full `WatchData`.
       operationId: watchEpisode
       parameters:
         - $ref: '#/components/parameters/slug'
@@ -676,9 +775,18 @@ paths:
             type: string
           description: Episode number to watch
           example: "1"
+        - name: stream
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: true
+          description: Set to `false` to disable SSE streaming and wait for the complete JSON response
+          example: true
+        - $ref: '#/components/parameters/refresh'
       responses:
         '200':
-          description: Streaming sources
+          description: Streaming sources response (JSON on cache hit or stream=false, SSE chunks when streaming)
           content:
             application/json:
               schema:
@@ -689,8 +797,20 @@ paths:
                     example: true
                   cached:
                     type: boolean
+                  streaming:
+                    type: boolean
+                    example: false
                   data:
                     $ref: '#/components/schemas/WatchData'
+            text/event-stream:
+              schema:
+                type: string
+                description: >
+                  Progressive SSE events:
+                  - `data: {"type":"episode","episode":{...}}`
+                  - `data: {"type":"servers","servers":[...]}`
+                  - `data: {"type":"source","source":{...}}`
+                  - `data: {"type":"done"}`
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -703,7 +823,8 @@ paths:
       tags: [Watch]
       summary: Streaming proxy
       description: >
-        Internal proxy to bypass Cloudflare and CORS restrictions for m3u8 video streams and subtitle files.
+        High-volume zero-copy streaming proxy to bypass Cloudflare and CORS restrictions for m3u8 video streams, WebVTT subtitle files, and media segments.
+        Features multi-node proxy pool routing, anti-bot browser header rotation, SSRF guard, and automatic failover retries.
         Rewrites segment URLs within m3u8 playlists to keep them routed through the proxy.
       operationId: proxyStream
       parameters:
@@ -723,6 +844,13 @@ paths:
             format: uri
           description: Referer header to bypass hotlink protection
           example: "https://megaplay.buzz/"
+        - name: proxy
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Optional custom proxy node URL (http/https/socks) for outbound routing
+          example: "http://user:pass@proxy.example.com:8080"
       responses:
         '200':
           description: Proxied stream data
@@ -731,14 +859,49 @@ paths:
               schema:
                 type: string
                 description: m3u8 playlist with rewritten segment URLs
+            text/vtt:
+              schema:
+                type: string
+                description: WebVTT subtitle track
             application/octet-stream:
               schema:
                 type: string
                 format: binary
+                description: Binary video/audio segment stream
         '400':
           $ref: '#/components/responses/BadRequest'
+        '403':
+          description: Access denied (SSRF guard blocked target local/private IP)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Forbidden: Access to private or local network addresses is restricted"
         '500':
           $ref: '#/components/responses/Error'
+        '502':
+          description: Bad Gateway (Upstream proxy failed after retries)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Proxy failed after 3 attempts"
+                  detail:
+                    type: string
+                  url:
+                    type: string
 
 components:
   parameters:
@@ -759,6 +922,7 @@ components:
         type: string
         enum: ["0", "1"]
       description: Set to `1` to bypass cache and force a fresh scrape
+      example: "1"
 
   schemas:
     # ─── Shared ────────────────────────────────────────────────────
@@ -768,22 +932,95 @@ components:
         sub:
           type: integer
           nullable: true
+          example: 1080
         dub:
           type: integer
           nullable: true
+          example: 1040
         total:
           type: integer
           nullable: true
+          example: 1100
 
     AnimeCard:
       type: object
       properties:
         id:
           type: string
+          example: "4127"
         slug:
           type: string
+          example: "one-piece-odmau"
         title:
           type: string
+          example: "One Piece"
+        titleJp:
+          type: string
+          example: "One Piece"
+        image:
+          type: string
+          format: uri
+          example: "https://cdn.anipixcdn.co/thumbnail/a1ea8c4b315b25f06e3c212423037951.jpg"
+        href:
+          type: string
+          example: "/api/anime/one-piece-odmau"
+        type:
+          type: string
+          example: "TV"
+        episodes:
+          $ref: '#/components/schemas/EpisodeStatus'
+        date:
+          type: string
+          example: "1999"
+        score:
+          type: number
+          example: 8.9
+        totalEpisodes:
+          type: integer
+          example: 1100
+
+    LatestEpisodeItem:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "4127"
+        slug:
+          type: string
+          example: "one-piece-odmau"
+        title:
+          type: string
+          example: "One Piece"
+        titleJp:
+          type: string
+          example: "One Piece"
+        image:
+          type: string
+          format: uri
+        href:
+          type: string
+          example: "/api/anime/one-piece-odmau"
+        watchHref:
+          type: string
+          example: "https://anikoto.net/watch/one-piece-odmau/ep-1100"
+        type:
+          type: string
+          example: "TV"
+        episodes:
+          $ref: '#/components/schemas/EpisodeStatus'
+
+    TopTableItem:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "4127"
+        slug:
+          type: string
+          example: "one-piece-odmau"
+        title:
+          type: string
+          example: "One Piece"
         titleJp:
           type: string
         image:
@@ -791,16 +1028,44 @@ components:
           format: uri
         href:
           type: string
+          example: "/api/anime/one-piece-odmau"
         type:
           type: string
+          example: "TV"
         episodes:
           $ref: '#/components/schemas/EpisodeStatus'
         date:
           type: string
-        score:
-          type: number
-        totalEpisodes:
+          example: "Jul 2024"
+
+    TopAnimeItem:
+      type: object
+      properties:
+        rank:
           type: integer
+          example: 1
+        id:
+          type: string
+          example: "4127"
+        slug:
+          type: string
+          example: "one-piece-odmau"
+        title:
+          type: string
+          example: "One Piece"
+        titleJp:
+          type: string
+        image:
+          type: string
+          format: uri
+        href:
+          type: string
+          example: "/api/anime/one-piece-odmau"
+        type:
+          type: string
+          example: "TV"
+        episodes:
+          $ref: '#/components/schemas/EpisodeStatus'
 
     # ─── Home ──────────────────────────────────────────────────────
     SpotlightAnime:
@@ -808,26 +1073,36 @@ components:
       properties:
         slug:
           type: string
+          example: "solo-leveling-season-2-arise-from-the-shadow-vvy1z"
         title:
           type: string
+          example: "Solo Leveling Season 2 -Arise from the Shadow-"
         titleJp:
           type: string
         rating:
           type: string
+          example: "PG-13"
         quality:
           type: string
+          example: "HD"
         hasDub:
           type: boolean
+          example: true
         hasSub:
           type: boolean
+          example: true
         date:
           type: string
+          example: "Jan 2025"
         synopsis:
           type: string
+          example: "Sung Jinwoo continues his ascent as the world's strongest hunter..."
         watchUrl:
           type: string
+          example: "https://anikoto.net/watch/solo-leveling-season-2-arise-from-the-shadow-vvy1z"
         href:
           type: string
+          example: "/api/anime/solo-leveling-season-2-arise-from-the-shadow-vvy1z"
         image:
           type: string
           format: uri
@@ -842,33 +1117,33 @@ components:
         latestEpisodes:
           type: array
           items:
-            $ref: '#/components/schemas/AnimeCard'
+            $ref: '#/components/schemas/LatestEpisodeItem'
         newRelease:
           type: array
           items:
-            $ref: '#/components/schemas/AnimeCard'
+            $ref: '#/components/schemas/TopTableItem'
         newAdded:
           type: array
           items:
-            $ref: '#/components/schemas/AnimeCard'
+            $ref: '#/components/schemas/TopTableItem'
         justCompleted:
           type: array
           items:
-            $ref: '#/components/schemas/AnimeCard'
+            $ref: '#/components/schemas/TopTableItem'
         topDay:
           type: array
           items:
-            $ref: '#/components/schemas/AnimeCard'
+            $ref: '#/components/schemas/TopAnimeItem'
         topWeek:
           type: array
           items:
-            $ref: '#/components/schemas/AnimeCard'
+            $ref: '#/components/schemas/TopAnimeItem'
         topMonth:
           type: array
           items:
-            $ref: '#/components/schemas/AnimeCard'
+            $ref: '#/components/schemas/TopAnimeItem'
 
-    # ─── Anime Detail ──────────────────────────────────────────────
+    # ─── Anime Detail & Tooltip ────────────────────────────────────
     RelatedAnime:
       type: object
       properties:
@@ -876,8 +1151,10 @@ components:
           type: string
         malId:
           type: string
+          example: "21"
         title:
           type: string
+          example: "One Piece Film: Red"
         titleJp:
           type: string
         image:
@@ -885,36 +1162,54 @@ components:
           format: uri
         relation:
           type: string
+          example: "Side Story"
         href:
           type: string
+          example: "/api/anime/one-piece-film-red-8636"
         slug:
           type: string
+          example: "one-piece-film-red-8636"
 
     Episode:
       type: object
       properties:
         number:
           type: string
+          example: "1"
         title:
           type: string
+          example: "I'm Luffy! The Man Who Will Become the Pirate King!"
         href:
           type: string
+          example: "https://anikoto.net/watch/one-piece-odmau/ep-1"
         id:
           type: string
+          example: "131818"
         dataIds:
           type: string
+          example: "131818,131819"
+        dataMal:
+          type: string
+          example: "59970"
+        dataTimestamp:
+          type: string
+          example: "1778859916"
         hasDub:
           type: boolean
+          example: true
         hasSub:
           type: boolean
+          example: true
 
     AnimeEpisodes:
       type: object
       properties:
         animeId:
           type: string
+          example: "4127"
         slug:
           type: string
+          example: "one-piece-odmau"
         episodes:
           type: array
           items:
@@ -925,61 +1220,135 @@ components:
       properties:
         id:
           type: string
+          example: "4127"
         slug:
           type: string
+          example: "one-piece-odmau"
         title:
           type: string
+          example: "One Piece"
         titleJp:
           type: string
+          example: "ONE PIECE"
         alternativeTitles:
           type: array
           items:
             type: string
+          example: ["OP", "Wan Pīsu"]
         image:
           type: string
           format: uri
         rating:
           type: string
+          example: "PG-13"
         quality:
           type: string
+          example: "HD"
         hasDub:
           type: boolean
+          example: true
         hasSub:
           type: boolean
+          example: true
         synopsis:
           type: string
+          example: "Gol D. Roger was known as the 'Pirate King'..."
         type:
           type: string
+          example: "TV"
         premiered:
           type: string
+          example: "Fall 1999"
         aired:
           type: string
+          example: "Oct 20, 1999 to ?"
         status:
           type: string
+          example: "Currently Airing"
         genres:
           type: array
           items:
             type: string
+          example: ["Action", "Adventure", "Comedy", "Fantasy", "Shounen"]
         malScore:
           type: number
+          example: 8.9
         duration:
           type: string
+          example: "24m"
         episodeCount:
           type: integer
+          example: 1100
         studios:
           type: array
           items:
             type: string
+          example: ["Toei Animation"]
         producers:
           type: array
           items:
             type: string
+          example: ["Fuji TV", "TAP", "Shueisha"]
         watchUrl:
           type: string
+          example: "https://anikoto.net/watch/one-piece-odmau"
         episodes:
           $ref: '#/components/schemas/AnimeEpisodes'
 
-    # ─── Search / Filter ───────────────────────────────────────────
+    AnimeTooltip:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "4127"
+        slug:
+          type: string
+          example: "that-time-i-got-reincarnated-as-a-slime-tales-veldora-s-journal-ngovq"
+        title:
+          type: string
+          example: "That Time I Got Reincarnated as a Slime: Tales - Veldora's Journal"
+        titleJp:
+          type: string
+          example: "Tensei shitara Slime Datta Ken: Kanwa - Veldora Nikki"
+        rating:
+          type: string
+          example: "PG-13"
+        quality:
+          type: string
+          example: "HD"
+        episodes:
+          $ref: '#/components/schemas/EpisodeStatus'
+        synopsis:
+          type: string
+          example: "Ifrit, who has been trapped in Rimuru due to the latter's Predator skill..."
+        otherNames:
+          type: string
+          example: "That Time I Got Reincarnated as a Slime..."
+        score:
+          type: number
+          example: 6.48
+        year:
+          type: string
+          example: "2024"
+        duration:
+          type: string
+          example: "23m"
+        status:
+          type: string
+          example: "Finished Airing"
+        genres:
+          type: array
+          items:
+            type: string
+          example: ["Fantasy", "Comedy", "Shounen"]
+        watchUrl:
+          type: string
+          example: "https://anikoto.net/watch/that-time-i-got-reincarnated-as-a-slime-tales-veldora-s-journal-ngovq"
+        href:
+          type: string
+          example: "/api/anime/that-time-i-got-reincarnated-as-a-slime-tales-veldora-s-journal-ngovq"
+
+    # ─── Search / Filter / Listings ───────────────────────────────
     SearchResult:
       type: object
       properties:
@@ -989,18 +1358,112 @@ components:
             $ref: '#/components/schemas/AnimeCard'
         keyword:
           type: string
+          example: "one piece"
         currentPage:
           type: integer
+          example: 1
         hasNextPage:
           type: boolean
+          example: true
         hasPreviousPage:
           type: boolean
+          example: false
         maxPage:
           type: integer
+          example: 3
         minPage:
           type: integer
+          example: 1
         totalResults:
           type: integer
+          example: 42
+
+    FilterParams:
+      type: object
+      properties:
+        keyword:
+          type: string
+        genre:
+          type: array
+          items:
+            type: string
+        season:
+          type: array
+          items:
+            type: string
+        year:
+          type: array
+          items:
+            type: string
+        type:
+          type: array
+          items:
+            type: string
+        status:
+          type: array
+          items:
+            type: string
+        language:
+          type: array
+          items:
+            type: string
+        rating:
+          type: array
+          items:
+            type: string
+        sort:
+          type: string
+        page:
+          type: string
+
+    FilterGenreOption:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "1"
+        name:
+          type: string
+          example: "Action"
+        slug:
+          type: string
+          example: "action"
+
+    FilterOptions:
+      type: object
+      properties:
+        genres:
+          type: array
+          items:
+            $ref: '#/components/schemas/FilterGenreOption'
+        years:
+          type: array
+          items:
+            type: string
+        types:
+          type: array
+          items:
+            type: string
+        seasons:
+          type: array
+          items:
+            type: string
+        statuses:
+          type: array
+          items:
+            type: string
+        languages:
+          type: array
+          items:
+            type: string
+        ratings:
+          type: array
+          items:
+            type: string
+        sorts:
+          type: array
+          items:
+            type: string
 
     FilterResult:
       type: object
@@ -1009,18 +1472,94 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AnimeCard'
+        topRated:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnimeCard'
         currentPage:
           type: integer
+          example: 1
         hasNextPage:
           type: boolean
+          example: true
         hasPreviousPage:
           type: boolean
+          example: false
         maxPage:
           type: integer
+          example: 10
         minPage:
           type: integer
+          example: 1
         params:
-          type: object
+          $ref: '#/components/schemas/FilterParams'
+        options:
+          $ref: '#/components/schemas/FilterOptions'
+
+    ListingResult:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnimeCard'
+        topRated:
+          type: array
+          items:
+            $ref: '#/components/schemas/AnimeCard'
+        currentPage:
+          type: integer
+          example: 1
+        hasNextPage:
+          type: boolean
+          example: true
+        hasPreviousPage:
+          type: boolean
+          example: false
+        minPage:
+          type: integer
+          example: 1
+        maxPage:
+          type: integer
+          example: 10
+
+    GenreListingResult:
+      allOf:
+        - $ref: '#/components/schemas/ListingResult'
+        - type: object
+          properties:
+            genre:
+              type: string
+              example: "action"
+
+    TypeListingResult:
+      allOf:
+        - $ref: '#/components/schemas/ListingResult'
+        - type: object
+          properties:
+            mediaType:
+              type: string
+              example: "movie"
+
+    HomeWidgetResult:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/LatestEpisodeItem'
+        currentPage:
+          type: integer
+          example: 1
+        hasNextPage:
+          type: boolean
+          example: true
+        hasPreviousPage:
+          type: boolean
+          example: false
+        maxPage:
+          type: integer
+          example: 2
 
     # ─── Schedule ──────────────────────────────────────────────────
     ScheduleDay:
@@ -1028,9 +1567,11 @@ components:
       properties:
         day:
           type: string
-          description: Day of the week (e.g. Monday)
+          description: Human-readable day label (e.g. "Sat Jul 04")
+          example: "Sat Jul 04"
         animes:
           type: array
+          description: Anime airing on this day
           items:
             $ref: '#/components/schemas/AnimeCard'
 
@@ -1050,12 +1591,16 @@ components:
       properties:
         id:
           type: string
+          example: "131818-vidplay"
         name:
           type: string
+          example: "VidPlay-1"
         type:
           type: string
+          example: "sub"
         svId:
           type: string
+          example: "8e4"
 
     VideoTrack:
       type: object
@@ -1063,46 +1608,51 @@ components:
         file:
           type: string
           format: uri
+          example: "https://megaplay.buzz/sub/..."
         label:
           type: string
+          example: "English"
         kind:
           type: string
+          example: "captions"
         default:
           type: boolean
+          example: true
         proxyUrl:
           type: string
+          example: "/api/proxy?url=..."
 
     VideoSource:
       type: object
       properties:
         server:
           type: string
+          example: "Vidstream-2"
         type:
           type: string
+          example: "sub"
         url:
           type: string
           format: uri
+          example: "https://megaplay.buzz/stream/..."
         m3u8:
           type: string
           format: uri
           nullable: true
+          example: "https://cdn.mewstream.buzz/.../master.m3u8"
         referer:
           type: string
           format: uri
+          example: "https://megaplay.buzz/"
         proxyUrl:
           type: string
           format: uri
           nullable: true
+          example: "/api/proxy?url=..."
         tracks:
           type: array
           items:
             $ref: '#/components/schemas/VideoTrack'
-
-    WatchData:
-      type: object
-      properties:
-        episode:
-          $ref: '#/components/schemas/Episode'
         skip_data:
           type: object
           nullable: true
@@ -1111,6 +1661,12 @@ components:
               $ref: '#/components/schemas/IntroOutro'
             outro:
               $ref: '#/components/schemas/IntroOutro'
+
+    WatchData:
+      type: object
+      properties:
+        episode:
+          $ref: '#/components/schemas/Episode'
         servers:
           type: array
           items:

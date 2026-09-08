@@ -1,4 +1,5 @@
 import axios from 'axios';
+import crypto from 'crypto';
 import { DEFAULT_HEADERS } from './constants';
 
 export interface SubtitleTrack {
@@ -37,21 +38,52 @@ async function getMegacloudKeys(): Promise<Record<string, string>> {
   return data;
 }
 
+function decryptMegaplayEnc(enc: string): string | null {
+  try {
+    const E = 'i?LMTAx0Q6,:}50U';
+    const C = "W0;27ToaUpl_P%'c";
+
+    let b64 = enc.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+
+    const cipherBytes = Buffer.from(b64, 'base64');
+    const key = Buffer.alloc(32);
+    key.set(Buffer.from(E, 'utf8').subarray(0, 32));
+    const iv = Buffer.from(C, 'utf8');
+
+    const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+    let decrypted = decipher.update(cipherBytes);
+    decrypted = Buffer.concat([decrypted, decipher.final()]);
+    const parsed = JSON.parse(decrypted.toString('utf8'));
+    return parsed.file || parsed[0]?.file || null;
+  } catch (err) {
+    console.error('[Megaplay] Decryption failed:', err);
+    return null;
+  }
+}
+
 async function _doMegaplay(
   host: string,
   html: string,
-  referer: string
+  referer: string,
+  sParam?: string | null,
+  embedUrl?: string
 ): Promise<ExtractedStream | null> {
   const match = html.match(/<title>File ([0-9]+)/);
   if (!match) return null;
 
   const id = match[1];
-  const { data } = await axios.get(`https://${host}/stream/getSources?id=${id}`, {
-    headers: { ...DEFAULT_HEADERS, 'X-Requested-With': 'XMLHttpRequest', Referer: referer },
+  const sQs = sParam ? `&s=${encodeURIComponent(sParam)}` : '';
+  const reqReferer = embedUrl || referer;
+  const { data } = await axios.get(`https://${host}/stream/getSources?id=${id}${sQs}`, {
+    headers: { ...DEFAULT_HEADERS, 'X-Requested-With': 'XMLHttpRequest', Referer: reqReferer },
     timeout: 5000,
   });
 
-  let m3u8: string | undefined = data?.sources?.file;
+  let m3u8: string | undefined = data?.sources?.file || data?.sources?.[0]?.file;
+  if (!m3u8 && data?.enc) {
+    m3u8 = decryptMegaplayEnc(data.enc) || undefined;
+  }
   const tracks: SubtitleTrack[] = data?.tracks || [];
   
   const intro = data?.intro && typeof data.intro.start === 'number' && typeof data.intro.end === 'number'
@@ -61,19 +93,24 @@ async function _doMegaplay(
     ? { start: data.outro.start, end: data.outro.end }
     : undefined;
 
-  if (m3u8 && m3u8.includes('mewstream.buzz')) {
-    let replacementHost = '1oe.lostproject.club';
-    const firstTrack = tracks.find(t => t.file && !t.file.includes('mewstream.buzz'));
-    if (firstTrack) {
+  if (m3u8) {
+    // cdn.imgnex.top blocks master.m3u8 with 403, but ncdn.imgnex.top serves master.m3u8 with 200 OK
+    if (m3u8.includes('//cdn.imgnex.top')) {
+      m3u8 = m3u8.replace('//cdn.imgnex.top', '//ncdn.imgnex.top');
+    } else if (m3u8.includes('mewstream.buzz')) {
+      let replacementHost = '1oe.lostproject.club';
+      const firstTrack = tracks.find(t => t.file && !t.file.includes('mewstream.buzz'));
+      if (firstTrack) {
+        try {
+          replacementHost = new URL(firstTrack.file).host;
+        } catch (_) {}
+      }
       try {
-        replacementHost = new URL(firstTrack.file).host;
+        const parsedM3u8 = new URL(m3u8);
+        parsedM3u8.host = replacementHost;
+        m3u8 = parsedM3u8.toString();
       } catch (_) {}
     }
-    try {
-      const parsedM3u8 = new URL(m3u8);
-      parsedM3u8.host = replacementHost;
-      m3u8 = parsedM3u8.toString();
-    } catch (_) {}
   }
 
   return m3u8 ? { m3u8, referer, tracks, intro, outro } : null;
@@ -185,13 +222,15 @@ export async function extractVidstream(
 
 export async function extractMegaplay(embedUrl: string): Promise<ExtractedStream | null> {
   try {
-    const host = new URL(embedUrl).host;
+    const parsed = new URL(embedUrl);
+    const host = parsed.host;
+    const sParam = parsed.searchParams.get('s');
     const referer = 'https://' + host + '/';
     const { data: html } = await axios.get<string>(embedUrl, {
       headers: { ...DEFAULT_HEADERS, Referer: referer },
       timeout: 5000,
     });
-    return await _doMegaplay(host, html, referer);
+    return await _doMegaplay(host, html, referer, sParam, embedUrl);
   } catch (err) {
     console.error('Megaplay extraction failed:', err);
     return null;

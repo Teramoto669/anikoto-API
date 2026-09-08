@@ -4,3 +4,15 @@ compatibility_date = "2024-01-01"
 
 [placement]
 mode = "smart"
+
+# Optional environment variables
+# [vars]
+# PROXIES = "http://user:pass@node1.proxy.com:8080,http://node2.proxy.com:8080"
+#
+# Secret key — if set, all requests must include X-Worker-Secret header matching this value.
+# Set via: wrangler secret put WORKER_SECRET
+# WORKER_SECRET = "your-random-secret-here"
+#
+# Optional cookie string to inject when scraping (e.g. country_code=SG)
+# Set via: wrangler secret put SCRAPE_COOKIE
+# SCRAPE_COOKIE = "country_code=SG"

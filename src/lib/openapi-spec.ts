@@ -545,7 +545,18 @@ const spec = {
                   properties: {
                     ok: { type: "boolean", example: true },
                     cached: { type: "boolean" },
-                    data: { type: "array", items: { $ref: "AnimeCard" } },
+                    data: {
+                      type: "object",
+                      properties: {
+                        results: { type: "array", items: { $ref: "AnimeCard" } },
+                        topRated: { type: "array", items: { $ref: "AnimeCard" } },
+                        currentPage: { type: "integer", example: 1 },
+                        hasNextPage: { type: "boolean", example: true },
+                        hasPreviousPage: { type: "boolean", example: false },
+                        minPage: { type: "integer", example: 1 },
+                        maxPage: { type: "integer", example: 10 },
+                      },
+                    },
                   },
                 },
               },
@@ -656,12 +667,24 @@ const spec = {
                   properties: {
                     ok: { type: "boolean", example: true },
                     cached: { type: "boolean" },
-                    data: { type: "array", items: { $ref: "AnimeCard" } },
+                    data: {
+                      type: "object",
+                      properties: {
+                        results: { type: "array", items: { $ref: "AnimeCard" } },
+                        topRated: { type: "array", items: { $ref: "AnimeCard" } },
+                        currentPage: { type: "integer", example: 1 },
+                        hasNextPage: { type: "boolean", example: true },
+                        hasPreviousPage: { type: "boolean", example: false },
+                        minPage: { type: "integer", example: 1 },
+                        maxPage: { type: "integer", example: 10 },
+                      },
+                    },
                   },
                 },
               },
             },
           },
+          "400": { description: "Invalid status type parameter" },
           "500": { description: "Internal server error" },
         },
       },
@@ -702,12 +725,25 @@ const spec = {
                   properties: {
                     ok: { type: "boolean", example: true },
                     cached: { type: "boolean" },
-                    data: { type: "array", items: { $ref: "AnimeCard" } },
+                    data: {
+                      type: "object",
+                      properties: {
+                        results: { type: "array", items: { $ref: "AnimeCard" } },
+                        topRated: { type: "array", items: { $ref: "AnimeCard" } },
+                        currentPage: { type: "integer", example: 1 },
+                        hasNextPage: { type: "boolean", example: true },
+                        hasPreviousPage: { type: "boolean", example: false },
+                        minPage: { type: "integer", example: 1 },
+                        maxPage: { type: "integer", example: 10 },
+                        genre: { type: "string", example: "action" },
+                      },
+                    },
                   },
                 },
               },
             },
           },
+          "400": { description: "Missing genre parameter" },
           "500": { description: "Internal server error" },
         },
       },
@@ -748,12 +784,25 @@ const spec = {
                   properties: {
                     ok: { type: "boolean", example: true },
                     cached: { type: "boolean" },
-                    data: { type: "array", items: { $ref: "AnimeCard" } },
+                    data: {
+                      type: "object",
+                      properties: {
+                        results: { type: "array", items: { $ref: "AnimeCard" } },
+                        topRated: { type: "array", items: { $ref: "AnimeCard" } },
+                        currentPage: { type: "integer", example: 1 },
+                        hasNextPage: { type: "boolean", example: true },
+                        hasPreviousPage: { type: "boolean", example: false },
+                        minPage: { type: "integer", example: 1 },
+                        maxPage: { type: "integer", example: 10 },
+                        mediaType: { type: "string", example: "movie" },
+                      },
+                    },
                   },
                 },
               },
             },
           },
+          "400": { description: "Invalid media type parameter" },
           "500": { description: "Internal server error" },
         },
       },
@@ -860,6 +909,15 @@ const spec = {
             schema: { type: "string" },
             example: "1",
           },
+          {
+            name: "stream",
+            in: "query",
+            required: false,
+            description: "Set to false to disable SSE streaming and receive a single full JSON response",
+            schema: { type: "boolean" },
+            example: true,
+          },
+          refreshParam,
         ],
         responses: {
           "200": {
@@ -886,26 +944,6 @@ const spec = {
                             dataTimestamp: { type: "string", example: "1778859916" },
                             hasDub: { type: "boolean", example: true },
                             hasSub: { type: "boolean", example: true },
-                          },
-                        },
-                        skip_data: {
-                          type: "object",
-                          nullable: true,
-                          properties: {
-                            intro: {
-                              type: "object",
-                              properties: {
-                                start: { type: "integer", example: 111 },
-                                end: { type: "integer", example: 199 },
-                              },
-                            },
-                            outro: {
-                              type: "object",
-                              properties: {
-                                start: { type: "integer", example: 1344 },
-                                end: { type: "integer", example: 1440 },
-                              },
-                            },
                           },
                         },
                         servers: {
@@ -941,6 +979,26 @@ const spec = {
                                     kind: { type: "string", example: "captions" },
                                     default: { type: "boolean", example: true },
                                     proxyUrl: { type: "string", example: "/api/proxy?url=..." },
+                                  },
+                                },
+                              },
+                              skip_data: {
+                                type: "object",
+                                nullable: true,
+                                properties: {
+                                  intro: {
+                                    type: "object",
+                                    properties: {
+                                      start: { type: "integer", example: 111 },
+                                      end: { type: "integer", example: 199 },
+                                    },
+                                  },
+                                  outro: {
+                                    type: "object",
+                                    properties: {
+                                      start: { type: "integer", example: 1344 },
+                                      end: { type: "integer", example: 1440 },
+                                    },
                                   },
                                 },
                               },

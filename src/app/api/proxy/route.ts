@@ -1,103 +1,206 @@
 import { NextResponse } from 'next/server';
-import axios from 'axios';
-import { DEFAULT_HEADERS } from '@/lib/constants';
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
+import { Readable } from 'stream';
+import { proxyPool, getRandomBrowserHeaders, isPrivateUrl } from '@/lib/proxy-pool';
 
 export const dynamic = 'force-dynamic';
 
+// Hop-by-hop headers to strip when proxying responses
+const HOP_BY_HOP_HEADERS = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  'cf-ray',
+  'cf-connecting-ip',
+  'x-forwarded-for',
+  'x-real-ip',
+]);
+
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
+  const { searchParams, origin } = new URL(req.url);
   const targetUrl = searchParams.get('url');
   const referer = searchParams.get('referer');
+  const customProxy = searchParams.get('proxy') || req.headers.get('x-proxy-target');
 
   if (!targetUrl) {
     return NextResponse.json({ ok: false, message: 'Missing url parameter' }, { status: 400 });
   }
 
-  const headers: Record<string, string> = {
-    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+  // ── SSRF Guard ─────────────────────────────────────────────────────────────
+  if (isPrivateUrl(targetUrl)) {
+    return NextResponse.json(
+      { ok: false, message: 'Forbidden: Access to private or local network addresses is restricted' },
+      { status: 403 }
+    );
+  }
+
+  // ── Build Base Headers ─────────────────────────────────────────────────────
+  const browserHeaders = getRandomBrowserHeaders();
+  const reqHeaders: Record<string, string> = {
+    'User-Agent': browserHeaders['User-Agent'],
     'Accept': '*/*',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Language': browserHeaders['Accept-Language'],
     'Sec-Fetch-Dest': 'empty',
     'Sec-Fetch-Mode': 'cors',
     'Sec-Fetch-Site': 'cross-site',
   };
 
+  if (browserHeaders['sec-ch-ua']) reqHeaders['sec-ch-ua'] = browserHeaders['sec-ch-ua'];
+  if (browserHeaders['sec-ch-ua-mobile']) reqHeaders['sec-ch-ua-mobile'] = browserHeaders['sec-ch-ua-mobile'];
+  if (browserHeaders['sec-ch-ua-platform']) reqHeaders['sec-ch-ua-platform'] = browserHeaders['sec-ch-ua-platform'];
+
   if (referer) {
-    headers['Referer'] = referer;
+    reqHeaders['Referer'] = referer;
     try {
-      headers['Origin'] = new URL(referer).origin;
-    } catch (_) {
-      // ignore malformed referer
-    }
+      reqHeaders['Origin'] = new URL(referer).origin;
+    } catch (_) { }
   }
 
-  // Forward Range header if present (needed for partial content / video seeking)
+  // Forward Range header for partial content / video seeking support
   const rangeHeader = req.headers.get('range');
   if (rangeHeader) {
-    headers['Range'] = rangeHeader;
+    reqHeaders['Range'] = rangeHeader;
   }
 
-  try {
-    const response = await axios.get(targetUrl, {
-      responseType: 'arraybuffer',
-      headers,
-      timeout: 20_000,
-      // Don't throw on non-2xx so we can forward the real status
+  // ── Upstream Fetch with Multi-Node Retry Logic ─────────────────────────────
+  const maxAttempts = 3;
+  let lastError: Error | null = null;
+  let response: AxiosResponse<Readable> | null = null;
+  let usedProxyUrl: string | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    // Select proxy node for this attempt
+    usedProxyUrl = customProxy || proxyPool.getNextProxy();
+    const httpsAgent = usedProxyUrl ? proxyPool.getAgent(usedProxyUrl) : undefined;
+
+    const axiosConfig: AxiosRequestConfig = {
+      headers: reqHeaders,
+      timeout: 15_000,
+      responseType: 'stream',
       validateStatus: (status) => status < 600,
-    });
+      ...(httpsAgent ? { httpsAgent, httpAgent: httpsAgent } : {}),
+    };
 
-    // If upstream blocked us (403/401/451), return the real status with a helpful message
-    if (response.status === 403 || response.status === 401) {
-      console.error(`[Proxy] Upstream blocked: ${response.status} on ${targetUrl}`);
-      return NextResponse.json(
-        {
-          ok: false,
-          message: `Upstream server blocked the request (HTTP ${response.status}). Try using the Cloudflare Worker proxy instead.`,
-          upstreamStatus: response.status,
-          url: targetUrl,
-        },
-        { status: response.status }
-      );
+    try {
+      const res = await axios.get<Readable>(targetUrl, axiosConfig);
+      response = res;
+
+      // If upstream returned 403 / 429 / 5xx, report failure to pool & retry next node
+      if (res.status === 403 || res.status === 429 || res.status >= 500) {
+        if (usedProxyUrl) proxyPool.reportFailure(usedProxyUrl);
+
+        if (attempt < maxAttempts) {
+          // Exponential backoff
+          await new Promise((r) => setTimeout(r, attempt * 300));
+          continue;
+        }
+      } else {
+        // Successful response
+        if (usedProxyUrl) proxyPool.reportSuccess(usedProxyUrl);
+        break;
+      }
+    } catch (err: unknown) {
+      if (usedProxyUrl) proxyPool.reportFailure(usedProxyUrl);
+      lastError = err instanceof Error ? err : new Error(String(err));
+
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, attempt * 300));
+        continue;
+      }
     }
+  }
 
-    if (response.status >= 400) {
-      console.error(`[Proxy] Upstream error: ${response.status} on ${targetUrl}`);
-      return NextResponse.json(
-        { ok: false, message: `Upstream error: HTTP ${response.status}`, upstreamStatus: response.status, url: targetUrl },
-        { status: response.status }
-      );
+  // If all retry attempts failed with exception
+  if (!response) {
+    console.error(`[Proxy Error] All ${maxAttempts} attempts failed for ${targetUrl}:`, lastError);
+    return NextResponse.json(
+      { ok: false, message: `Proxy failed after ${maxAttempts} attempts`, detail: lastError?.message, url: targetUrl },
+      { status: 502 }
+    );
+  }
+
+  // Forward upstream block or failure status if final attempt still blocked
+  if (response.status === 403 || response.status === 401) {
+    console.error(`[Proxy] Upstream blocked (${response.status}) on ${targetUrl}`);
+    return NextResponse.json(
+      {
+        ok: false,
+        message: `Upstream server blocked the request (HTTP ${response.status}). Try using the Cloudflare Worker proxy instead.`,
+        upstreamStatus: response.status,
+        url: targetUrl,
+      },
+      { status: response.status }
+    );
+  }
+
+  if (response.status >= 400) {
+    return NextResponse.json(
+      { ok: false, message: `Upstream error: HTTP ${response.status}`, upstreamStatus: response.status, url: targetUrl },
+      { status: response.status }
+    );
+  }
+
+  // ── Prepare Response Headers ───────────────────────────────────────────────
+  const resHeaders = new Headers();
+  const contentType = (response.headers['content-type'] as string) || '';
+
+  // Copy non-hop-by-hop response headers
+  Object.entries(response.headers).forEach(([key, val]) => {
+    const lowerKey = key.toLowerCase();
+    if (!HOP_BY_HOP_HEADERS.has(lowerKey) && val !== undefined) {
+      resHeaders.set(key, Array.isArray(val) ? val.join(', ') : String(val));
     }
+  });
 
-    const resHeaders = new Headers();
-    const contentType = (response.headers['content-type'] as string) || 'application/octet-stream';
-    resHeaders.set('Content-Type', contentType);
-    resHeaders.set('Access-Control-Allow-Origin', '*');
-    resHeaders.set('Cache-Control', 'no-cache');
+  resHeaders.set('Access-Control-Allow-Origin', '*');
+  resHeaders.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  resHeaders.set('Access-Control-Allow-Headers', '*');
+  resHeaders.set('X-Accel-Buffering', 'no'); // Disable reverse proxy buffering
 
-    // Forward Accept-Ranges and Content-Range for video seeking support
-    if (response.headers['accept-ranges']) {
-      resHeaders.set('Accept-Ranges', response.headers['accept-ranges'] as string);
+  const isManifest = /\.m3u8/i.test(targetUrl) || contentType.includes('mpegurl') || contentType.includes('m3u8');
+  const isSubtitle = /\.(vtt|srt|ass)$/i.test(targetUrl) || contentType.includes('vtt');
+
+  // ── Subtitle Response ──────────────────────────────────────────────────────
+  if (isSubtitle) {
+    resHeaders.set('Content-Type', 'text/vtt; charset=utf-8');
+    resHeaders.set('Cache-Control', 'public, max-age=3600');
+    const webStream = Readable.toWeb(response.data) as ReadableStream<Uint8Array>;
+    return new Response(webStream, { status: response.status, headers: resHeaders });
+  }
+
+  // ── HLS Playlist Rewriting ────────────────────────────────────────────────
+  if (isManifest) {
+    resHeaders.set('Content-Type', 'application/vnd.apple.mpegurl');
+    resHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+
+    // Read full playlist text
+    const chunks: Uint8Array[] = [];
+    const stream = response.data;
+    for await (const chunk of stream) {
+      chunks.push(chunk);
     }
-    if (response.headers['content-range']) {
-      resHeaders.set('Content-Range', response.headers['content-range'] as string);
-    }
+    const text = Buffer.concat(chunks).toString('utf-8');
+    const baseUrl = new URL(targetUrl);
 
-    let responseData = response.data;
+    // Build base proxy URL path
+    const proxyPath = `${origin}/api/proxy`;
 
-    // Rewrite internal URLs inside m3u8 playlists to pass through this proxy
-    if (targetUrl.includes('.m3u8') || contentType.includes('mpegurl')) {
-      const text = Buffer.from(responseData).toString('utf-8');
-      const baseUrl = new URL(targetUrl);
-
-      const rewrittenText = text.split('\n').map(line => {
-        // Rewrite URI attributes in tags (e.g. #EXT-X-KEY:URI="...", #EXT-X-MAP:URI="...", #EXT-X-MEDIA:URI="...")
+    const rewrittenText = text
+      .split('\n')
+      .map((line) => {
+        // Rewrite URI attributes in HLS tags (keys, maps, subtitles)
         if (line.includes('URI=')) {
           line = line.replace(/URI=["']([^"']+)["']/g, (match, uri) => {
-            let keyUrl = uri;
-            if (!keyUrl.startsWith('http')) {
-              keyUrl = new URL(keyUrl, baseUrl).toString();
-            } else {
+            try {
+              let keyUrl = uri.startsWith('http') ? uri : new URL(uri, baseUrl).toString();
+
+              // Domain fixup for CDN mirrors
               try {
                 const parsedKey = new URL(keyUrl);
                 if (
@@ -110,19 +213,25 @@ export async function GET(req: Request) {
                   keyUrl = parsedKey.toString();
                 }
               } catch (_) { }
+
+              let proxied = `${proxyPath}?url=${encodeURIComponent(keyUrl)}`;
+              if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
+              if (customProxy) proxied += `&proxy=${encodeURIComponent(customProxy)}`;
+              return `URI="${proxied}"`;
+            } catch {
+              return match;
             }
-            const proxied = `/api/proxy?url=${encodeURIComponent(keyUrl)}&referer=${encodeURIComponent(referer || '')}`;
-            return `URI="${proxied}"`;
           });
         }
 
-        if (line.startsWith('#') || !line.trim()) return line;
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return line;
 
-        // This is a media segment or sub-playlist line
-        let segmentUrl = line.trim();
-        if (!segmentUrl.startsWith('http')) {
-          segmentUrl = new URL(segmentUrl, baseUrl).toString();
-        } else {
+        // Media segment or sub-playlist line
+        try {
+          let segmentUrl = trimmed.startsWith('http') ? trimmed : new URL(trimmed, baseUrl).toString();
+
+          // Domain fixup for CDN mirrors
           try {
             const parsedSeg = new URL(segmentUrl);
             if (
@@ -135,30 +244,39 @@ export async function GET(req: Request) {
               segmentUrl = parsedSeg.toString();
             }
           } catch (_) { }
+
+          let proxied = `${proxyPath}?url=${encodeURIComponent(segmentUrl)}`;
+          if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
+          if (customProxy) proxied += `&proxy=${encodeURIComponent(customProxy)}`;
+          return proxied;
+        } catch {
+          return line;
         }
+      })
+      .join('\n');
 
-        // Return the proxied URL
-        return `/api/proxy?url=${encodeURIComponent(segmentUrl)}&referer=${encodeURIComponent(referer || '')}`;
-      }).join('\n');
-
-      responseData = Buffer.from(rewrittenText, 'utf-8');
-    }
-
-    return new NextResponse(responseData, {
-      status: response.status === 206 ? 206 : 200,
+    return new Response(rewrittenText, {
+      status: response.status,
       headers: resHeaders,
     });
-  } catch (err: unknown) {
-    if (axios.isAxiosError(err)) {
-      const status = err.response?.status || 500;
-      const code = err.code || '';
-      console.error(`[Proxy Error] ${status} (${code}) on ${targetUrl}`);
-      return NextResponse.json(
-        { ok: false, message: `Proxy failed: ${err.message}`, code, url: targetUrl },
-        { status }
-      );
-    }
-    console.error(`[Proxy Error] Unknown error on ${targetUrl}:`, err);
-    return NextResponse.json({ ok: false, message: 'Proxy request failed' }, { status: 500 });
   }
+
+  // ── Video / Audio Binary Streaming (Zero-Copy ReadableStream) ────────────
+  const isRealMedia =
+    contentType.includes('video') ||
+    contentType.includes('audio') ||
+    contentType.includes('octet-stream') ||
+    contentType.includes('mp4') ||
+    contentType.includes('mpeg');
+
+  resHeaders.set('Content-Type', isRealMedia ? contentType : 'application/octet-stream');
+  resHeaders.set('Cache-Control', 'public, max-age=7200, immutable');
+
+  // Convert Node readable stream to Web ReadableStream for zero-copy streaming
+  const webStream = Readable.toWeb(response.data) as ReadableStream<Uint8Array>;
+
+  return new Response(webStream, {
+    status: response.status === 206 ? 206 : response.status,
+    headers: resHeaders,
+  });
 }

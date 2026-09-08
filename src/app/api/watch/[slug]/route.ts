@@ -61,7 +61,6 @@ export async function GET(
         const collectedSources: WatchData['sources'] = [];
         let episode: WatchData['episode'] | undefined;
         let servers: WatchData['servers'] = [];
-        let skip_data: WatchData['skip_data'] = null;
 
         try {
           for await (const chunk of scrapeWatchStream(slug, epNum)) {
@@ -73,14 +72,12 @@ export async function GET(
               episode = chunk.episode;
             } else if (chunk.type === 'servers') {
               servers = chunk.servers;
-            } else if (chunk.type === 'skip_data') {
-              skip_data = chunk.skip_data;
             } else if (chunk.type === 'source') {
               collectedSources.push(chunk.source);
             } else if (chunk.type === 'done') {
               // Persist completed result so the next request is an instant cache hit
               if (episode) {
-                const fullData: WatchData = { episode, skip_data, servers, sources: collectedSources };
+                const fullData: WatchData = { episode, servers, sources: collectedSources };
                 cacheSet(cacheKey, fullData, CACHE_TTL.EPISODE);
               }
             }

@@ -24,14 +24,14 @@ export interface VideoSource {
   referer?: string; // Required referer for the m3u8 stream
   proxyUrl?: string | null; // The URL to proxy the stream through our backend
   tracks?: VideoTrack[];
+  skip_data?: {
+    intro?: IntroOutro;
+    outro?: IntroOutro;
+  };
 }
 
 export interface WatchData {
   episode: Episode;
-  skip_data?: {
-    intro?: IntroOutro;
-    outro?: IntroOutro;
-  } | null;
   servers: VideoServer[];
   sources: VideoSource[];
 }
@@ -50,15 +50,6 @@ export interface WatchStreamServers {
   servers: VideoServer[];
 }
 
-/** Chunk containing skip range details (intro/outro) */
-export interface WatchStreamSkipData {
-  type: 'skip_data';
-  skip_data: {
-    intro?: IntroOutro;
-    outro?: IntroOutro;
-  };
-}
-
 /** One chunk per resolved source — emitted as each server's extraction completes */
 export interface WatchStreamSource {
   type: 'source';
@@ -73,7 +64,6 @@ export interface WatchStreamDone {
 export type WatchStreamChunk =
   | WatchStreamEpisode
   | WatchStreamServers
-  | WatchStreamSkipData
   | WatchStreamSource
   | WatchStreamDone;
 
@@ -128,11 +118,11 @@ function buildSourceTasks(
   slug: string,
   epNum: string,
   getProxyUrl: (url: string, referer?: string) => string
-): Array<Promise<{ source: VideoSource; intro?: IntroOutro; outro?: IntroOutro } | null>> {
+): Array<Promise<VideoSource | null>> {
   const epReferer = `${BASE_URL}/watch/${slug}/ep-${epNum}`;
 
   // Regular servers
-  const serverTasks: Array<Promise<{ source: VideoSource; intro?: IntroOutro; outro?: IntroOutro } | null>> = servers.map(async (server) => {
+  const serverTasks: Array<Promise<VideoSource | null>> = servers.map(async (server) => {
     try {
       return await withTimeout(
         (async () => {
@@ -186,6 +176,10 @@ function buildSourceTasks(
             extracted = await extractStreamUrl(embedUrl, epReferer);
           }
 
+          const intro = extracted?.intro ?? ajaxSkip.intro;
+          const outro = extracted?.outro ?? ajaxSkip.outro;
+          const skip_data = (intro || outro) ? { intro, outro } : undefined;
+
           const source: VideoSource = {
             server: server.name,
             type: server.type,
@@ -197,12 +191,9 @@ function buildSourceTasks(
               ...t,
               proxyUrl: getProxyUrl(t.file, extracted!.referer),
             })) || [],
+            skip_data,
           };
-          return {
-            source,
-            intro: extracted?.intro ?? ajaxSkip.intro,
-            outro: extracted?.outro ?? ajaxSkip.outro,
-          };
+          return source;
         })(),
         SERVER_TIMEOUT_MS,
         server.name
@@ -283,7 +274,7 @@ export async function* scrapeWatchStream(
 
   // Tag each task so it can identify and remove itself from the pending set.
   type Tagged = Promise<{
-    result: { source: VideoSource; intro?: IntroOutro; outro?: IntroOutro } | null;
+    result: VideoSource | null;
     self: Tagged;
   }>;
   const pending = new Set<Tagged>();
@@ -292,42 +283,13 @@ export async function* scrapeWatchStream(
     pending.add(tagged);
   }
 
-  let bestSkipData = {
-    intro: { start: 0, end: 0 },
-    outro: { start: 0, end: 0 }
-  };
-  let hasRealSkipData = false;
-
   // Race all pending promises; yield each source the moment it resolves
   while (pending.size > 0) {
     const { result, self } = await Promise.race(pending);
     pending.delete(self);
     if (result) {
-      const { source, intro, outro } = result;
-      const sourceIntro = intro ?? { start: 0, end: 0 };
-      const sourceOutro = outro ?? { start: 0, end: 0 };
-      const isReal = sourceIntro.start > 0 || sourceIntro.end > 0 || sourceOutro.start > 0 || sourceOutro.end > 0;
-
-      if (isReal && !hasRealSkipData) {
-        bestSkipData = { intro: sourceIntro, outro: sourceOutro };
-        hasRealSkipData = true;
-        yield {
-          type: 'skip_data',
-          skip_data: bestSkipData,
-        } satisfies WatchStreamSkipData;
-      } else if (!isReal && !hasRealSkipData) {
-        bestSkipData = { intro: sourceIntro, outro: sourceOutro };
-      }
-      yield { type: 'source', source } satisfies WatchStreamSource;
+      yield { type: 'source', source: result } satisfies WatchStreamSource;
     }
-  }
-
-  // If we finished and never emitted any real skip data, emit the best fallback we got
-  if (!hasRealSkipData) {
-    yield {
-      type: 'skip_data',
-      skip_data: bestSkipData,
-    } satisfies WatchStreamSkipData;
   }
 
   yield { type: 'done' } satisfies WatchStreamDone;
@@ -342,15 +304,13 @@ export async function scrapeWatch(slug: string, epNum: string): Promise<WatchDat
   const sources: VideoSource[] = [];
   let episode: Episode | undefined;
   let servers: VideoServer[] = [];
-  let skip_data: WatchData['skip_data'] = null;
 
   for await (const chunk of scrapeWatchStream(slug, epNum)) {
     if (chunk.type === 'episode') episode = chunk.episode;
     else if (chunk.type === 'servers') servers = chunk.servers;
-    else if (chunk.type === 'skip_data') skip_data = chunk.skip_data;
     else if (chunk.type === 'source') sources.push(chunk.source);
   }
 
   if (!episode) throw new Error('No episode data returned from stream');
-  return { episode, skip_data, servers, sources };
+  return { episode, servers, sources };
 }

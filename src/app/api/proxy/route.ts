@@ -21,15 +21,53 @@ const HOP_BY_HOP_HEADERS = new Set([
   'x-real-ip',
 ]);
 
+/**
+ * Normalizes dead, stale, or rate-limited upstream CDN mirror hosts to the active high-capacity cdn.imgnex.top origin.
+ */
+function remapMirrorUrl(urlStr: string): string {
+  try {
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname;
+
+    if (host === 'bb.akirax.buzz' && pathname.startsWith('/anime/')) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    if (host === 'ncdn.imgnex.top' && !pathname.endsWith('master.m3u8')) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    if (host.endsWith('.snapcdn.top') && pathname.startsWith('/anime/')) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    const isDeadBuzz = host.includes('zaplume.buzz') || host.includes('mewstream.buzz');
+    if (isDeadBuzz || (host.endsWith('.click') && !host.includes('akirax.buzz'))) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    return parsed.toString();
+  } catch {
+    return urlStr;
+  }
+}
+
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
-  const targetUrl = searchParams.get('url');
+  const rawTargetUrl = searchParams.get('url');
   const referer = searchParams.get('referer');
   const customProxy = searchParams.get('proxy') || req.headers.get('x-proxy-target');
 
-  if (!targetUrl) {
+  if (!rawTargetUrl) {
     return NextResponse.json({ ok: false, message: 'Missing url parameter' }, { status: 400 });
   }
+
+  const targetUrl = remapMirrorUrl(rawTargetUrl);
 
   // ── SSRF Guard ─────────────────────────────────────────────────────────────
   if (isPrivateUrl(targetUrl)) {
@@ -40,20 +78,27 @@ export async function GET(req: Request) {
   }
 
   // ── Build Base Headers ─────────────────────────────────────────────────────
+  // Forward client browser headers if provided
+  const clientUserAgent = req.headers.get('user-agent');
+  const clientSecChUa = req.headers.get('sec-ch-ua');
+  const clientSecChUaMobile = req.headers.get('sec-ch-ua-mobile');
+  const clientSecChUaPlatform = req.headers.get('sec-ch-ua-platform');
+  const clientAcceptLanguage = req.headers.get('accept-language');
+
   const browserHeaders = getRandomBrowserHeaders();
   const reqHeaders: Record<string, string> = {
-    'User-Agent': browserHeaders['User-Agent'],
+    'User-Agent': clientUserAgent || browserHeaders['User-Agent'],
     'Accept': '*/*',
     'Accept-Encoding': 'gzip, deflate, br',
-    'Accept-Language': browserHeaders['Accept-Language'],
+    'Accept-Language': clientAcceptLanguage || browserHeaders['Accept-Language'],
     'Sec-Fetch-Dest': 'empty',
     'Sec-Fetch-Mode': 'cors',
     'Sec-Fetch-Site': 'cross-site',
   };
 
-  if (browserHeaders['sec-ch-ua']) reqHeaders['sec-ch-ua'] = browserHeaders['sec-ch-ua'];
-  if (browserHeaders['sec-ch-ua-mobile']) reqHeaders['sec-ch-ua-mobile'] = browserHeaders['sec-ch-ua-mobile'];
-  if (browserHeaders['sec-ch-ua-platform']) reqHeaders['sec-ch-ua-platform'] = browserHeaders['sec-ch-ua-platform'];
+  if (clientSecChUa || browserHeaders['sec-ch-ua']) reqHeaders['sec-ch-ua'] = clientSecChUa || browserHeaders['sec-ch-ua']!;
+  if (clientSecChUaMobile || browserHeaders['sec-ch-ua-mobile']) reqHeaders['sec-ch-ua-mobile'] = clientSecChUaMobile || browserHeaders['sec-ch-ua-mobile']!;
+  if (clientSecChUaPlatform || browserHeaders['sec-ch-ua-platform']) reqHeaders['sec-ch-ua-platform'] = clientSecChUaPlatform || browserHeaders['sec-ch-ua-platform']!;
 
   if (referer) {
     reqHeaders['Referer'] = referer;
@@ -199,20 +244,7 @@ export async function GET(req: Request) {
           line = line.replace(/URI=["']([^"']+)["']/g, (match, uri) => {
             try {
               let keyUrl = uri.startsWith('http') ? uri : new URL(uri, baseUrl).toString();
-
-              // Domain fixup for CDN mirrors
-              try {
-                const parsedKey = new URL(keyUrl);
-                if (
-                  parsedKey.hostname.endsWith('.buzz') ||
-                  parsedKey.hostname.endsWith('.click') ||
-                  parsedKey.hostname.includes('zaplume.buzz') ||
-                  parsedKey.hostname.includes('mewstream.buzz')
-                ) {
-                  parsedKey.host = baseUrl.host;
-                  keyUrl = parsedKey.toString();
-                }
-              } catch (_) { }
+              keyUrl = remapMirrorUrl(keyUrl);
 
               let proxied = `${proxyPath}?url=${encodeURIComponent(keyUrl)}`;
               if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
@@ -230,20 +262,7 @@ export async function GET(req: Request) {
         // Media segment or sub-playlist line
         try {
           let segmentUrl = trimmed.startsWith('http') ? trimmed : new URL(trimmed, baseUrl).toString();
-
-          // Domain fixup for CDN mirrors
-          try {
-            const parsedSeg = new URL(segmentUrl);
-            if (
-              parsedSeg.hostname.endsWith('.buzz') ||
-              parsedSeg.hostname.endsWith('.click') ||
-              parsedSeg.hostname.includes('zaplume.buzz') ||
-              parsedSeg.hostname.includes('mewstream.buzz')
-            ) {
-              parsedSeg.host = baseUrl.host;
-              segmentUrl = parsedSeg.toString();
-            }
-          } catch (_) { }
+          segmentUrl = remapMirrorUrl(segmentUrl);
 
           let proxied = `${proxyPath}?url=${encodeURIComponent(segmentUrl)}`;
           if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;

@@ -77,6 +77,51 @@ function isPrivateUrl(targetUrl) {
   }
 }
 
+/**
+ * Normalizes dead, stale, or rate-limited upstream CDN mirror hosts to the active high-capacity cdn.imgnex.top origin.
+ * - *.snapcdn.top shard nodes rate-limit Worker IPs with HTTP 429; cdn.imgnex.top serves the exact same segments.
+ * - bb.akirax.buzz /anime/* paths 404; active origin is cdn.imgnex.top.
+ * - ncdn.imgnex.top child playlists and segments 404 or point to dead mirrors; active host is cdn.imgnex.top.
+ */
+function remapMirrorUrl(urlStr) {
+  try {
+    const parsed = new URL(urlStr);
+    const host = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname;
+
+    // bb.akirax.buzz does not host /anime/ paths (returns 404). Active origin is cdn.imgnex.top.
+    if (host === 'bb.akirax.buzz' && pathname.startsWith('/anime/')) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    // Non-master files under ncdn.imgnex.top (child playlists & segments) return 404 or stale mirrors.
+    // Active origin for index playlists and media segments is cdn.imgnex.top.
+    if (host === 'ncdn.imgnex.top' && !pathname.endsWith('master.m3u8')) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    // Shard origins under *.snapcdn.top (e.g. shard-103.snapcdn.top) rate-limit Cloudflare Worker IPs (HTTP 429).
+    // Active high-capacity CDN origin for all /anime/ segments and playlists is cdn.imgnex.top.
+    if (host.endsWith('.snapcdn.top') && pathname.startsWith('/anime/')) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    // Dead buzz mirrors
+    const isDeadBuzz = host.includes('zaplume.buzz') || host.includes('mewstream.buzz');
+    if (isDeadBuzz || (host.endsWith('.click') && !host.includes('akirax.buzz'))) {
+      parsed.host = 'cdn.imgnex.top';
+      return parsed.toString();
+    }
+
+    return parsed.toString();
+  } catch (_) {
+    return urlStr;
+  }
+}
+
 export default {
   async fetch(request, env) {
     // ── Handle CORS Preflight ───────────────────────────────────────────────
@@ -109,29 +154,22 @@ export default {
     }
 
     // ── Target URL Normalization & Stale Mirror Remapping ──────────────────
-    let targetUrl = target;
-    try {
-      const parsedTarget = new URL(targetUrl);
-      // bb.akirax.buzz does not host /anime/ paths (returns 404). Active origin is cdn.imgnex.top.
-      if (parsedTarget.hostname === 'bb.akirax.buzz' && parsedTarget.pathname.startsWith('/anime/')) {
-        parsedTarget.host = 'cdn.imgnex.top';
-        targetUrl = parsedTarget.toString();
-      }
-      // Non-master files under ncdn.imgnex.top (child playlists & segments) return 404 or stale mirrors.
-      // Active origin for index playlists and media segments is cdn.imgnex.top.
-      if (parsedTarget.hostname === 'ncdn.imgnex.top' && !parsedTarget.pathname.endsWith('master.m3u8')) {
-        parsedTarget.host = 'cdn.imgnex.top';
-        targetUrl = parsedTarget.toString();
-      }
-    } catch (_) {}
+    let targetUrl = remapMirrorUrl(target);
 
     // ── Build Upstream Request Headers ─────────────────────────────────────
+    // Prefer forwarding client's real browser headers to maintain session consistency across chunks
+    const clientUserAgent = request.headers.get('User-Agent');
+    const clientSecChUa = request.headers.get('sec-ch-ua');
+    const clientSecChUaMobile = request.headers.get('sec-ch-ua-mobile');
+    const clientSecChUaPlatform = request.headers.get('sec-ch-ua-platform');
+    const clientAcceptLanguage = request.headers.get('Accept-Language');
+
     const fp = getRandomHeaders();
     const upstreamHeaders = new Headers();
-    upstreamHeaders.set('User-Agent', fp['User-Agent']);
+    upstreamHeaders.set('User-Agent', clientUserAgent || fp['User-Agent']);
     upstreamHeaders.set('Accept', '*/*');
     upstreamHeaders.set('Accept-Encoding', 'gzip, deflate, br');
-    upstreamHeaders.set('Accept-Language', fp['Accept-Language']);
+    upstreamHeaders.set('Accept-Language', clientAcceptLanguage || fp['Accept-Language']);
     // Detect XHR/AJAX request: fetcher passes X-Requested-With for JSON endpoints
     const isXhrRequest = request.headers.get('X-Requested-With') === 'XMLHttpRequest';
     const incomingAccept = request.headers.get('Accept');
@@ -191,9 +229,11 @@ export default {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        const isMediaChunk = !/\.m3u8/i.test(targetUrl) && !/\.(vtt|srt|ass)($|\?)/i.test(targetUrl) && !isScrapeMode;
         const fetchOptions = {
           headers: upstreamHeaders,
           redirect: 'follow',
+          ...(isMediaChunk ? { cf: { cacheEverything: true, cacheTtl: 86400 } } : {}),
         };
 
         // If Cloudflare proxy backend or custom proxy IP configured
@@ -207,10 +247,11 @@ export default {
 
         upstreamRes = await fetch(targetUrl, fetchOptions);
 
-        if (upstreamRes.status === 404) {
+        // Fallback for 404 Not Found, 429 Too Many Requests, or 403 Forbidden on rate-limited/dead origins
+        if (upstreamRes.status === 404 || upstreamRes.status === 429 || upstreamRes.status === 403) {
           try {
             const parsed = new URL(targetUrl);
-            if ((parsed.hostname === 'bb.akirax.buzz' || parsed.hostname === 'ncdn.imgnex.top') && parsed.pathname.startsWith('/anime/')) {
+            if (parsed.host !== 'cdn.imgnex.top' && parsed.pathname.startsWith('/anime/')) {
               parsed.host = 'cdn.imgnex.top';
               const fallbackUrl = parsed.toString();
               if (fallbackUrl !== targetUrl) {
@@ -257,8 +298,8 @@ export default {
 
     // ── Process Response Headers ───────────────────────────────────────────
     const contentType = upstreamRes.headers.get('content-type') || '';
-    const isManifest = /\.m3u8/i.test(target) || contentType.includes('mpegurl') || contentType.includes('m3u8');
-    const isSubtitle = /\.(vtt|srt|ass)$/i.test(target) || contentType.includes('vtt');
+    const isManifest = /\.m3u8/i.test(targetUrl) || contentType.includes('mpegurl') || contentType.includes('m3u8');
+    const isSubtitle = /\.(vtt|srt|ass)$/i.test(targetUrl) || contentType.includes('vtt');
 
     // ── Scrape Mode: return raw HTML/JSON for server-side processing ─────────
     if (isScrapeMode) {
@@ -306,30 +347,11 @@ export default {
           }
 
           // Rewrite URI attributes in tag lines (AES keys, init maps, sub-playlists)
-          // Rewrite URI= attributes (#EXT-X-KEY, #EXT-X-MAP, etc.)
           if (line.includes('URI=')) {
             line = line.replace(/URI=["']([^"']+)["']/g, (match, uri) => {
               try {
                 let abs = uri.startsWith('http') ? uri : new URL(uri, targetUrl).toString();
-
-                try {
-                  const parsedUri = new URL(abs);
-                  // Resolve child playlists / segments under ncdn.imgnex.top to cdn.imgnex.top
-                  if (parsedUri.hostname === 'ncdn.imgnex.top' && !parsedUri.pathname.endsWith('master.m3u8')) {
-                    parsedUri.host = 'cdn.imgnex.top';
-                    abs = parsedUri.toString();
-                  }
-                  // bb.akirax.buzz with /anime/ path is a dead mirror; active host is cdn.imgnex.top
-                  if (parsedUri.hostname === 'bb.akirax.buzz' && parsedUri.pathname.startsWith('/anime/')) {
-                    parsedUri.host = 'cdn.imgnex.top';
-                    abs = parsedUri.toString();
-                  }
-                  const isDeadBuzz = parsedUri.hostname.includes('zaplume.buzz') || parsedUri.hostname.includes('mewstream.buzz');
-                  if (isDeadBuzz || (parsedUri.hostname.endsWith('.click') && !parsedUri.hostname.includes('akirax.buzz'))) {
-                    parsedUri.host = new URL(targetUrl).host;
-                    abs = parsedUri.toString();
-                  }
-                } catch (_) { }
+                abs = remapMirrorUrl(abs);
 
                 let proxied = `${workerBase}/?url=${encodeURIComponent(abs)}`;
                 if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
@@ -347,25 +369,7 @@ export default {
           // Segment or sub-playlist lines
           try {
             let resolved = trimmed.startsWith('http') ? trimmed : new URL(trimmed, targetUrl).toString();
-
-            try {
-              const parsedUri = new URL(resolved);
-              // Resolve child playlists / segments under ncdn.imgnex.top to cdn.imgnex.top
-              if (parsedUri.hostname === 'ncdn.imgnex.top' && !parsedUri.pathname.endsWith('master.m3u8')) {
-                parsedUri.host = 'cdn.imgnex.top';
-                resolved = parsedUri.toString();
-              }
-              // bb.akirax.buzz with /anime/ path is a dead mirror; active host is cdn.imgnex.top
-              if (parsedUri.hostname === 'bb.akirax.buzz' && parsedUri.pathname.startsWith('/anime/')) {
-                parsedUri.host = 'cdn.imgnex.top';
-                resolved = parsedUri.toString();
-              }
-              const isDeadBuzz = parsedUri.hostname.includes('zaplume.buzz') || parsedUri.hostname.includes('mewstream.buzz');
-              if (isDeadBuzz || (parsedUri.hostname.endsWith('.click') && !parsedUri.hostname.includes('akirax.buzz'))) {
-                parsedUri.host = new URL(targetUrl).host;
-                resolved = parsedUri.toString();
-              }
-            } catch (_) { }
+            resolved = remapMirrorUrl(resolved);
 
             let proxied = `${workerBase}/?url=${encodeURIComponent(resolved)}`;
             if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
@@ -395,7 +399,7 @@ export default {
       contentType.includes('mpeg');
 
     resHeaders.set('Content-Type', isRealMedia ? contentType : 'application/octet-stream');
-    resHeaders.set('Cache-Control', 'public, max-age=7200, immutable');
+    resHeaders.set('Cache-Control', 'public, max-age=86400, immutable');
 
     return new Response(upstreamRes.body, {
       status: upstreamRes.status,

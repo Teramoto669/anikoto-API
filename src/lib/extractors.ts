@@ -67,15 +67,25 @@ async function _doMegaplay(
   html: string,
   referer: string,
   sParam?: string | null,
-  embedUrl?: string
+  embedUrl?: string,
+  mediaType?: string
 ): Promise<ExtractedStream | null> {
   const match = html.match(/<title>File ([0-9]+)/);
   if (!match) return null;
 
   const id = match[1];
   const sQs = sParam ? `&s=${encodeURIComponent(sParam)}` : '';
+
+  // Resolve mediaType (sub, dub, hsub)
+  // Priority: 1. HTML settings (e.g. type: 'dub') 2. passed mediaType / server.type 3. URL path (/dub, /hsub, /sub)
+  const htmlTypeMatch = html.match(/type:\s*['"]([a-zA-Z0-9_-]+)['"]/i) ||
+                        html.match(/data-type=['"]([a-zA-Z0-9_-]+)['"]/i);
+  const urlTypeMatch = (embedUrl || '').match(/\/(sub|dub|hsub|raw)(?:[?#]|$)/i);
+  const resolvedType = htmlTypeMatch?.[1] || mediaType || urlTypeMatch?.[1];
+  const typeQs = resolvedType ? `&type=${encodeURIComponent(resolvedType)}` : '';
+
   const reqReferer = embedUrl || referer;
-  const { data } = await axios.get(`https://${host}/stream/getSources?id=${id}${sQs}`, {
+  const { data } = await axios.get(`https://${host}/stream/getSources?id=${id}${sQs}${typeQs}`, {
     headers: { ...DEFAULT_HEADERS, 'X-Requested-With': 'XMLHttpRequest', Referer: reqReferer },
     timeout: 5000,
   });
@@ -178,7 +188,8 @@ async function _doMegacloud(
 
 export async function extractVidstream(
   embedUrl: string,
-  referer: string
+  referer: string,
+  mediaType?: string
 ): Promise<ExtractedStream | null> {
   try {
     let parentOrigin = referer;
@@ -195,10 +206,10 @@ export async function extractVidstream(
     const typeMatch = html.match(/type:\s*'(\w+)'/);
     const domain2Match = html.match(/domain2_url:\s*'([^']+)'/);
 
-    if (!epIdMatch || !typeMatch || !domain2Match) return null;
+    if (!epIdMatch || (!typeMatch && !mediaType) || !domain2Match) return null;
 
     const epId = epIdMatch[1];
-    const epType = typeMatch[1];
+    const epType = mediaType || typeMatch?.[1];
     const domain2 = domain2Match[1].trim();
 
     const saveDataUrl = `${domain2}/save_data.php?id=${epId}-${epType}`;
@@ -220,7 +231,10 @@ export async function extractVidstream(
   }
 }
 
-export async function extractMegaplay(embedUrl: string): Promise<ExtractedStream | null> {
+export async function extractMegaplay(
+  embedUrl: string,
+  mediaType?: string
+): Promise<ExtractedStream | null> {
   try {
     const parsed = new URL(embedUrl);
     const host = parsed.host;
@@ -230,7 +244,7 @@ export async function extractMegaplay(embedUrl: string): Promise<ExtractedStream
       headers: { ...DEFAULT_HEADERS, Referer: referer },
       timeout: 5000,
     });
-    return await _doMegaplay(host, html, referer, sParam, embedUrl);
+    return await _doMegaplay(host, html, referer, sParam, embedUrl, mediaType);
   } catch (err) {
     console.error('Megaplay extraction failed:', err);
     return null;
@@ -262,7 +276,8 @@ export async function extractMegacloud(
 
 export async function extractStreamUrl(
   embedUrl: string,
-  parentReferer?: string
+  parentReferer?: string,
+  mediaType?: string
 ): Promise<ExtractedStream | null> {
   const hostname = new URL(embedUrl).hostname;
 
@@ -274,7 +289,7 @@ export async function extractStreamUrl(
     const megaplayUrl = embedUrl
       .replace('vidwish.live', 'megaplay.buzz')
       .replace('megacloud.bloggy.click', 'megaplay.buzz');
-    return extractMegaplay(megaplayUrl);
+    return extractMegaplay(megaplayUrl, mediaType);
   }
 
   if (hostname.includes('megacloud.blog')) {
@@ -282,7 +297,7 @@ export async function extractStreamUrl(
   }
 
   if (hostname.includes('vidtube.site')) {
-    return extractMegaplay(embedUrl);
+    return extractMegaplay(embedUrl, mediaType);
   }
 
   let currentUrl = embedUrl;
@@ -371,7 +386,8 @@ export async function extractStreamUrl(
         finalHost.includes('vidwish.live') ||
         finalHost.includes('vidtube.site')
       ) {
-        return await _doMegaplay(new URL(currentUrl).host, html, finalReferer);
+        const sParam = new URL(currentUrl).searchParams.get('s');
+        return await _doMegaplay(new URL(currentUrl).host, html, finalReferer, sParam, currentUrl, mediaType);
       }
       if (finalHost.includes('megacloud.blog')) {
         return await _doMegacloud(currentUrl, html, currentUrl); // Use currentUrl as referer for getSources!

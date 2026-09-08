@@ -160,11 +160,11 @@ function buildSourceTasks(
             // so we return the first successful result immediately without waiting for the slow/timing out one
             try {
               extracted = await Promise.any([
-                extractVidstream(embedUrl, epReferer).then((res) => {
+                extractVidstream(embedUrl, epReferer, server.type).then((res) => {
                   if (!res) throw new Error('No result');
                   return res;
                 }),
-                extractStreamUrl(embedUrl, epReferer).then((res) => {
+                extractStreamUrl(embedUrl, epReferer, server.type).then((res) => {
                   if (!res) throw new Error('No result');
                   return res;
                 }),
@@ -173,7 +173,7 @@ function buildSourceTasks(
               extracted = null;
             }
           } else {
-            extracted = await extractStreamUrl(embedUrl, epReferer);
+            extracted = await extractStreamUrl(embedUrl, epReferer, server.type);
           }
 
           const intro = extracted?.intro ?? ajaxSkip.intro;

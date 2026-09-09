@@ -164,13 +164,19 @@ const DEFAULT_ALLOWED_STREAM_PATTERNS = [
   '*.chiaki.site',
 ];
 
-function isAllowedStreamDomain(targetUrl, env) {
+function isAllowedStreamDomain(targetUrl, env, referer) {
   try {
-    const host = new URL(targetUrl).hostname.toLowerCase();
+    const parsed = new URL(targetUrl);
+    const host = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname.toLowerCase();
+    const search = parsed.search.toLowerCase();
     const envAllowed = env && (env.ALLOWED_STREAM_DOMAINS || env.ALLOWED_PROXY_HOSTS)
       ? (env.ALLOWED_STREAM_DOMAINS || env.ALLOWED_PROXY_HOSTS).split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
       : [];
 
+    if (envAllowed.includes('*')) return true;
+
+    // 1. Explicit domain whitelist check
     const allPatterns = [...DEFAULT_ALLOWED_STREAM_PATTERNS, ...envAllowed];
     for (const pattern of allPatterns) {
       if (pattern.startsWith('*.')) {
@@ -180,6 +186,45 @@ function isAllowedStreamDomain(targetUrl, env) {
         return true;
       }
     }
+
+    // 2. Reject hazardous non-media file extensions
+    const blockedExts = ['.exe', '.dll', '.sh', '.bat', '.cmd', '.apk', '.zip', '.rar', '.7z', '.tar', '.gz', '.pdf', '.doc', '.docx', '.iso'];
+    if (blockedExts.some((ext) => pathname.endsWith(ext))) {
+      return false;
+    }
+
+    // 3. Dynamic Media Pattern Matching (m3u8, ts, mp4, vtt, keys, and image-disguised video chunks)
+    const isMediaFile =
+      /\.(m3u8|ts|m4s|mp4|aac|m4a|vtt|srt|ass|key)($|\?)/i.test(pathname + search) ||
+      /\/seg-\d+/i.test(pathname) ||
+      /(\/anime\/|\/hls\/|\/stream\/).*\.(jpg|jpeg|png|image|webp)($|\?)/i.test(pathname + search) ||
+      pathname.includes('~tplv-');
+
+    // 4. Valid Streaming Context (legitimate player referer, stream path, or signed CDN token)
+    const hasStreamingContext = Boolean(
+      (referer && (
+        referer.includes('megaplay') ||
+        referer.includes('vidstream') ||
+        referer.includes('megacloud') ||
+        referer.includes('anikoto') ||
+        referer.includes('aonime') ||
+        referer.includes('/watch') ||
+        referer.includes('/stream')
+      )) ||
+      pathname.includes('/anime/') ||
+      pathname.includes('/hls/') ||
+      pathname.includes('/stream/') ||
+      /\/seg-\d+/i.test(pathname) ||
+      pathname.includes('~tplv-') ||
+      parsed.searchParams.has('x-expires') ||
+      parsed.searchParams.has('token') ||
+      parsed.searchParams.has('sig')
+    );
+
+    if (isMediaFile && hasStreamingContext) {
+      return true;
+    }
+
     return false;
   } catch (_) {
     return false;
@@ -235,7 +280,7 @@ export default {
 
     const { searchParams, origin } = new URL(request.url);
     const target = searchParams.get('url');
-    const referer = searchParams.get('referer');
+    const referer = searchParams.get('referer') || request.headers.get('Referer') || '';
     const customProxy = searchParams.get('proxy') || request.headers.get('x-proxy-target');
 
     if (!target) {
@@ -248,8 +293,8 @@ export default {
     }
 
     // ── Enforce Streaming Domain Allowlist (Prevent Open Forward Proxy) ─────
-    if (!isAllowedStreamDomain(target, env)) {
-      return Response.json({ error: 'Target host is not permitted for streaming proxy' }, { status: 403, headers: CORS_HEADERS });
+    if (!isAllowedStreamDomain(target, env, referer)) {
+      return Response.json({ error: 'Target host or media pattern is not permitted for streaming proxy' }, { status: 403, headers: CORS_HEADERS });
     }
 
     // ── Validate Custom Proxy against Pool (if configured) ─────────────────

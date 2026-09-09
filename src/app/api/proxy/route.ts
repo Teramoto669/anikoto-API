@@ -66,7 +66,7 @@ function remapMirrorUrl(urlStr: string): string {
 export async function GET(req: Request) {
   const { searchParams, origin } = new URL(req.url);
   const rawTargetUrl = searchParams.get('url');
-  const referer = searchParams.get('referer');
+  const referer = searchParams.get('referer') || req.headers.get('referer') || '';
   const customProxy = searchParams.get('proxy') || req.headers.get('x-proxy-target');
 
   if (!rawTargetUrl) {
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
   const targetUrl = remapMirrorUrl(rawTargetUrl);
 
   // ── SSRF & Domain Allowlist Guard ──────────────────────────────────────────
-  if (!isAllowedStreamDomain(targetUrl)) {
+  if (!isAllowedStreamDomain(targetUrl, referer || undefined)) {
     return NextResponse.json(
       { ok: false, message: 'Forbidden: Streaming proxy is restricted to authorized media domains' },
       { status: 403 }

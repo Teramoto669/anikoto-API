@@ -226,19 +226,25 @@ const DEFAULT_ALLOWED_STREAM_DOMAINS = [
 ];
 
 /**
- * Validates if the target URL host is on the streaming whitelist.
+ * Validates if the target URL host is on the streaming whitelist,
+ * or matches dynamic media streaming characteristics and streaming context.
  */
-export function isAllowedStreamDomain(targetUrl: string): boolean {
+export function isAllowedStreamDomain(targetUrl: string, referer?: string): boolean {
   try {
-    const host = new URL(targetUrl).hostname.toLowerCase();
+    const parsed = new URL(targetUrl);
+    const host = parsed.hostname.toLowerCase();
+    const pathname = parsed.pathname.toLowerCase();
+    const search = parsed.search.toLowerCase();
 
     const envAllowed = (process.env.ALLOWED_PROXY_HOSTS || process.env.ALLOWED_STREAM_DOMAINS || '')
       .split(',')
       .map(s => s.trim().toLowerCase())
       .filter(Boolean);
 
-    const allPatterns = [...DEFAULT_ALLOWED_STREAM_DOMAINS, ...envAllowed];
+    if (envAllowed.includes('*')) return true;
 
+    // 1. Explicit domain whitelist check
+    const allPatterns = [...DEFAULT_ALLOWED_STREAM_DOMAINS, ...envAllowed];
     for (const pattern of allPatterns) {
       if (pattern.startsWith('*.')) {
         const root = pattern.slice(2);
@@ -247,6 +253,45 @@ export function isAllowedStreamDomain(targetUrl: string): boolean {
         return true;
       }
     }
+
+    // 2. Reject hazardous non-media file extensions
+    const blockedExts = ['.exe', '.dll', '.sh', '.bat', '.cmd', '.apk', '.zip', '.rar', '.7z', '.tar', '.gz', '.pdf', '.doc', '.docx', '.iso'];
+    if (blockedExts.some((ext) => pathname.endsWith(ext))) {
+      return false;
+    }
+
+    // 3. Dynamic Media Pattern Matching (m3u8, ts, mp4, vtt, keys, and image-disguised video chunks)
+    const isMediaFile =
+      /\.(m3u8|ts|m4s|mp4|aac|m4a|vtt|srt|ass|key)($|\?)/i.test(pathname + search) ||
+      /\/seg-\d+/i.test(pathname) ||
+      /(\/anime\/|\/hls\/|\/stream\/).*\.(jpg|jpeg|png|image|webp)($|\?)/i.test(pathname + search) ||
+      pathname.includes('~tplv-');
+
+    // 4. Valid Streaming Context (legitimate player referer, stream path, or signed CDN token)
+    const hasStreamingContext = Boolean(
+      (referer && (
+        referer.includes('megaplay') ||
+        referer.includes('vidstream') ||
+        referer.includes('megacloud') ||
+        referer.includes('anikoto') ||
+        referer.includes('aonime') ||
+        referer.includes('/watch') ||
+        referer.includes('/stream')
+      )) ||
+      pathname.includes('/anime/') ||
+      pathname.includes('/hls/') ||
+      pathname.includes('/stream/') ||
+      /\/seg-\d+/i.test(pathname) ||
+      pathname.includes('~tplv-') ||
+      parsed.searchParams.has('x-expires') ||
+      parsed.searchParams.has('token') ||
+      parsed.searchParams.has('sig')
+    );
+
+    if (isMediaFile && hasStreamingContext) {
+      return true;
+    }
+
     return false;
   } catch {
     return false;

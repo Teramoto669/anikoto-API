@@ -1,6 +1,7 @@
 import { scrapeWatchStream, scrapeWatch, WatchData } from '@/lib/scrapers/watch.scraper';
 import { cacheGet, cacheSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validateSlug } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,14 +28,15 @@ export async function GET(
   try {
     const { searchParams } = new URL(req.url);
     const resolvedParams = await params;
-    const slug = resolvedParams.slug;
-    const epNum = searchParams.get('ep') || '1';
+    const slug = validateSlug(resolvedParams?.slug);
+    if (!slug) {
+      return Response.json({ ok: false, message: 'Invalid or missing slug parameter' }, { status: 400 });
+    }
+
+    const rawEp = searchParams.get('ep') || '1';
+    const epNum = /^\d+(\.\d+)?$/.test(rawEp) ? rawEp : '1';
     const refresh = searchParams.get('refresh') === '1';
     const isStream = searchParams.get('stream') !== 'false';
-
-    if (!slug) {
-      return Response.json({ ok: false, message: 'Missing slug' }, { status: 400 });
-    }
 
     const cacheKey = `watch:${slug}:${epNum}`;
 

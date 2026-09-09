@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeHomeWidget } from '@/lib/scrapers/home.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validateWidgetName, validatePage } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,8 +24,9 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const name = searchParams.get('name')?.trim() || searchParams.get('type')?.trim() || 'updated-all';
-    const page = parseInt(searchParams.get('page') ?? '1', 10);
+    const rawName = searchParams.get('name')?.trim() || searchParams.get('type')?.trim() || 'updated-all';
+    const name = validateWidgetName(rawName) || 'updated-all';
+    const page = validatePage(searchParams.get('page'));
     const refresh = searchParams.get('refresh') === '1';
 
     const key = `widget:${name}:${page}`;

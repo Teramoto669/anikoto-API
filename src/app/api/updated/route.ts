@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeListingPage } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validatePage } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +21,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get('page') ?? '1', 10);
+    const page = validatePage(searchParams.get('page'));
     const refresh = searchParams.get('refresh') === '1';
 
     const path = '/latest-updated';

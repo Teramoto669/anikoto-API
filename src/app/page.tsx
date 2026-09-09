@@ -2,7 +2,7 @@
 "use client";
 
 import spec from "@/lib/openapi-spec";
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 
 // Tag colours
 const TAG_COLORS: Record<string, string> = {
@@ -33,11 +33,11 @@ export default function DocsPage() {
     data: unknown;
     loading: boolean;
   } | null>(null);
-  const [origin, setOrigin] = useState<string>("https://anikoto-scrap-api.vercel.app");
-
-  useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
+  const origin = React.useSyncExternalStore(
+    () => () => {},
+    () => window.location.origin,
+    () => "https://anikoto-scrap-api.vercel.app"
+  );
 
   if (activePath !== prevActivePath) {
     setPrevActivePath(activePath);

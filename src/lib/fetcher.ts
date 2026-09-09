@@ -2,7 +2,24 @@ import axios, { AxiosRequestConfig } from 'axios';
 import * as cheerio from 'cheerio';
 import { BASE_URL, DEFAULT_HEADERS } from './constants';
 import cache, { getOrSet } from './cache';
-import { proxyPool, getRandomBrowserHeaders } from './proxy-pool';
+import { proxyPool, getRandomBrowserHeaders, isPrivateUrl } from './proxy-pool';
+import { sanitizeUrlForLogging } from './validation';
+
+/**
+ * Validates and constructs target URL, ensuring it only targets the configured BASE_URL.
+ */
+function buildTargetUrl(path: string): string {
+  const base = new URL(BASE_URL);
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    const parsed = new URL(path);
+    if (parsed.origin !== base.origin) {
+      throw new Error(`Invalid target origin: ${parsed.origin}. Requests must target ${base.origin}`);
+    }
+    return parsed.toString();
+  }
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${base.origin}${cleanPath}`;
+}
 
 /**
  * Execute an axios HTTP request with proxy pool rotation, browser UA/fingerprint rotation, and retry logic.
@@ -33,6 +50,12 @@ async function executeResilientRequest<T>(
       ...config,
       headers: mergedHeaders,
       timeout: 15_000,
+      maxRedirects: 3,
+      beforeRedirect: (options) => {
+        if (options.href && isPrivateUrl(options.href)) {
+          throw new Error(`SSRF blocked redirect to private address: ${options.href}`);
+        }
+      },
       ...(httpsAgent ? { httpsAgent, httpAgent: httpsAgent } : {}),
     };
 
@@ -48,7 +71,8 @@ async function executeResilientRequest<T>(
     }
   }
 
-  throw lastError || new Error(`Request failed after ${maxAttempts} attempts: ${url}`);
+  const safeUrl = sanitizeUrlForLogging(url);
+  throw lastError || new Error(`Request failed after ${maxAttempts} attempts: ${safeUrl}`);
 }
 
 /**
@@ -60,7 +84,8 @@ export async function fetchPage(
   extraHeaders?: Record<string, string>,
   refresh?: boolean
 ): Promise<cheerio.CheerioAPI> {
-  const cacheKey = `html:${path}`;
+  const targetUrl = buildTargetUrl(path);
+  const cacheKey = `html:${targetUrl}`;
   if (refresh) {
     cache.del(cacheKey);
   }
@@ -68,11 +93,11 @@ export async function fetchPage(
   const html = await getOrSet(
     cacheKey,
     async () => {
-      let url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+      let finalUrl = targetUrl;
       if (refresh) {
-        url += url.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`;
+        finalUrl += finalUrl.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`;
       }
-      const data = await executeResilientRequest<string>(url, {
+      const data = await executeResilientRequest<string>(finalUrl, {
         headers: {
           ...(refresh ? { 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' } : {}),
           ...extraHeaders,
@@ -96,17 +121,19 @@ export async function fetchJson<T = unknown>(
   extraHeaders?: Record<string, string>,
   refresh?: boolean
 ): Promise<T> {
-  let url = path.startsWith('http') ? path : `${BASE_URL}${path}`;
+  const targetUrl = buildTargetUrl(path);
+  let finalUrl = targetUrl;
   if (refresh) {
-    url += url.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`;
+    finalUrl += finalUrl.includes('?') ? `&_t=${Date.now()}` : `?_t=${Date.now()}`;
   }
-  const data = await executeResilientRequest<T>(url, {
+
+  return executeResilientRequest<T>(finalUrl, {
     headers: {
-      Accept: 'application/json, text/javascript, */*',
       'X-Requested-With': 'XMLHttpRequest',
+      Accept: 'application/json, text/javascript, */*; q=0.01',
+      Referer: `${BASE_URL}/`,
       ...(refresh ? { 'Cache-Control': 'no-cache, no-store', Pragma: 'no-cache' } : {}),
       ...extraHeaders,
     },
   });
-  return data;
 }

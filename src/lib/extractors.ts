@@ -129,7 +129,7 @@ async function _doMegaplay(
 async function _doMegacloud(
   embedUrl: string,
   html: string,
-  referer: string
+  _referer: string
 ): Promise<ExtractedStream | null> {
   const origin = new URL(embedUrl).origin;
 

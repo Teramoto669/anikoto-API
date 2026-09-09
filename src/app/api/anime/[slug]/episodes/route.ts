@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeAnimeEpisodes } from '@/lib/scrapers/anime.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validateSlug } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,9 +20,10 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   try {
-    const { slug } = await params;
+    const rawParams = await params;
+    const slug = validateSlug(rawParams?.slug);
     if (!slug) {
-      return NextResponse.json({ ok: false, message: 'slug is required' }, { status: 400 });
+      return NextResponse.json({ ok: false, message: 'Invalid or missing slug parameter' }, { status: 400 });
     }
 
     const { searchParams } = new URL(req.url);

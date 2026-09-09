@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeListingPage } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validateGenre, validatePage } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,13 +26,14 @@ export async function GET(
   { params }: { params: Promise<{ genre: string }> }
 ) {
   try {
-    const { genre } = await params;
+    const rawParams = await params;
+    const genre = validateGenre(rawParams?.genre);
     if (!genre) {
-      return NextResponse.json({ ok: false, message: 'genre is required' }, { status: 400 });
+      return NextResponse.json({ ok: false, message: 'Invalid or missing genre parameter' }, { status: 400 });
     }
 
     const { searchParams } = new URL(req.url);
-    const page = parseInt(searchParams.get('page') ?? '1', 10);
+    const page = validatePage(searchParams.get('page'));
     const refresh = searchParams.get('refresh') === '1';
 
     const key = `genre:${genre}:${page}`;

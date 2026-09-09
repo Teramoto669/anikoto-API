@@ -3,6 +3,7 @@ import { scrapeFilter } from '@/lib/scrapers/search.scraper';
 import { FilterParams } from '@/lib/types';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL, FILTER_OPTIONS } from '@/lib/constants';
+import { validateKeyword, validatePage } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,8 +29,12 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
 
+    const rawKeyword = searchParams.get('keyword');
+    const keyword = rawKeyword ? (validateKeyword(rawKeyword) ?? undefined) : undefined;
+    const page = String(validatePage(searchParams.get('page')));
+
     const params: FilterParams = {
-      keyword: searchParams.get('keyword') ?? undefined,
+      keyword,
       genre: searchParams.getAll('genre[]'),
       season: searchParams.getAll('season[]'),
       year: searchParams.getAll('year[]'),
@@ -38,7 +43,7 @@ export async function GET(req: Request) {
       language: searchParams.getAll('language[]'),
       rating: searchParams.getAll('rating[]'),
       sort: searchParams.get('sort') ?? undefined,
-      page: searchParams.get('page') ?? '1',
+      page,
     };
 
     // Remove empty arrays

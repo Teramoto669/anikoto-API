@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeAnimeTooltip } from '@/lib/scrapers/tooltip.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validateId } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,9 +19,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = await params;
+    const rawParams = await params;
+    const id = validateId(rawParams?.id);
     if (!id) {
-      return NextResponse.json({ ok: false, message: 'id is required' }, { status: 400 });
+      return NextResponse.json({ ok: false, message: 'Invalid or missing numeric id parameter' }, { status: 400 });
     }
 
     const { searchParams } = new URL(req.url);

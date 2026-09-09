@@ -92,18 +92,19 @@ function makeProxyHelper() {
   };
 }
 
-function parseSkipData(skipData: any): { intro?: IntroOutro; outro?: IntroOutro } {
+function parseSkipData(skipData: unknown): { intro?: IntroOutro; outro?: IntroOutro } {
   const result: { intro?: IntroOutro; outro?: IntroOutro } = {};
-  if (skipData?.intro && Array.isArray(skipData.intro) && skipData.intro.length >= 2) {
-    const start = Number(skipData.intro[0]);
-    const end = Number(skipData.intro[1]);
+  const data = skipData as { intro?: unknown[]; outro?: unknown[] } | undefined;
+  if (data?.intro && Array.isArray(data.intro) && data.intro.length >= 2) {
+    const start = Number(data.intro[0]);
+    const end = Number(data.intro[1]);
     if (!isNaN(start) && !isNaN(end)) {
       result.intro = { start, end };
     }
   }
-  if (skipData?.outro && Array.isArray(skipData.outro) && skipData.outro.length >= 2) {
-    const start = Number(skipData.outro[0]);
-    const end = Number(skipData.outro[1]);
+  if (data?.outro && Array.isArray(data.outro) && data.outro.length >= 2) {
+    const start = Number(data.outro[0]);
+    const end = Number(data.outro[1]);
     if (!isNaN(start) && !isNaN(end)) {
       result.outro = { start, end };
     }

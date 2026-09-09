@@ -57,18 +57,66 @@ const HOP_BY_HOP_HEADERS = new Set([
   'x-real-ip',
 ]);
 
+/**
+ * Validates whether an IP address is private, loopback, or internal cloud metadata.
+ */
+function isPrivateIp(ip) {
+  const cleanIp = ip.replace(/^\[|\]$/g, '').toLowerCase();
+
+  // IPv4 checks
+  const ipv4Match = cleanIp.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number);
+    if (a === 127) return true; // 127.0.0.0/8 loopback
+    if (a === 10) return true;  // 10.0.0.0/8 private
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 private
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16 private
+    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local & cloud metadata
+    if (a === 0) return true; // 0.0.0.0/8 current network
+    if (a === 100 && (b >= 64 && b <= 127)) return true; // Carrier NAT & Alibaba metadata
+    return false;
+  }
+
+  // IPv6 checks
+  if (
+    cleanIp === '::1' ||
+    cleanIp === '::' ||
+    cleanIp.startsWith('fc') ||
+    cleanIp.startsWith('fd') ||
+    cleanIp.startsWith('fe80') ||
+    cleanIp.startsWith('::ffff:')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Checks if a target URL is private or points to an internal network address.
+ */
 function isPrivateUrl(targetUrl) {
   try {
     const parsed = new URL(targetUrl);
-    const host = parsed.hostname.toLowerCase();
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
-    if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return true;
-    if (host === '::1' || host === '[::1]' || host === '0.0.0.0') return true;
-    if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-    if (/^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
-    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+    if (parsed.username || parsed.password) return true;
+
+    const host = parsed.hostname.toLowerCase();
+    if (
+      host === 'localhost' ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal') ||
+      host.endsWith('.lan')
+    ) {
+      return true;
+    }
+
+    if (host === 'metadata.google.internal' || host.includes('169.254.169.254')) {
+      return true;
+    }
+
+    if (isPrivateIp(host)) return true;
+
     return false;
   } catch (_) {
     return true;
@@ -76,10 +124,50 @@ function isPrivateUrl(targetUrl) {
 }
 
 /**
+ * Allowed video stream and CDN domains to prevent open forward proxy abuse.
+ */
+const DEFAULT_ALLOWED_STREAM_PATTERNS = [
+  'cdn.imgnex.top',
+  '*.imgnex.top',
+  '*.snapcdn.top',
+  '*.lostproject.club',
+  'bb.akirax.buzz',
+  '*.akirax.buzz',
+  '*.megaplay.buzz',
+  '*.vidstream.buzz',
+  '*.rapid-cloud.ru',
+  '*.bunnycdn.ru',
+  '*.streamwish.to',
+  '*.filelions.to',
+  '*.doodstream.com',
+  '*.streamtape.com',
+  '*.mp4upload.com',
+];
+
+function isAllowedStreamDomain(targetUrl, env) {
+  try {
+    const host = new URL(targetUrl).hostname.toLowerCase();
+    const envAllowed = env && (env.ALLOWED_STREAM_DOMAINS || env.ALLOWED_PROXY_HOSTS)
+      ? (env.ALLOWED_STREAM_DOMAINS || env.ALLOWED_PROXY_HOSTS).split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+      : [];
+
+    const allPatterns = [...DEFAULT_ALLOWED_STREAM_PATTERNS, ...envAllowed];
+    for (const pattern of allPatterns) {
+      if (pattern.startsWith('*.')) {
+        const root = pattern.slice(2);
+        if (host === root || host.endsWith('.' + root)) return true;
+      } else if (host === pattern) {
+        return true;
+      }
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+}
+
+/**
  * Normalizes dead, stale, or rate-limited upstream CDN mirror hosts to the active high-capacity cdn.imgnex.top origin.
- * - *.snapcdn.top shard nodes rate-limit Worker IPs with HTTP 429; cdn.imgnex.top serves the exact same segments.
- * - bb.akirax.buzz /anime/* paths 404; active origin is cdn.imgnex.top.
- * - ncdn.imgnex.top child playlists and segments 404 or point to dead mirrors; active host is cdn.imgnex.top.
  */
 function remapMirrorUrl(urlStr) {
   try {
@@ -87,27 +175,21 @@ function remapMirrorUrl(urlStr) {
     const host = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname;
 
-    // bb.akirax.buzz does not host /anime/ paths (returns 404). Active origin is cdn.imgnex.top.
     if (host === 'bb.akirax.buzz' && pathname.startsWith('/anime/')) {
       parsed.host = 'cdn.imgnex.top';
       return parsed.toString();
     }
 
-    // Non-master files under ncdn.imgnex.top (child playlists & segments) return 404 or stale mirrors.
-    // Active origin for index playlists and media segments is cdn.imgnex.top.
     if (host === 'ncdn.imgnex.top' && !pathname.endsWith('master.m3u8')) {
       parsed.host = 'cdn.imgnex.top';
       return parsed.toString();
     }
 
-    // Shard origins under *.snapcdn.top (e.g. shard-103.snapcdn.top) rate-limit Cloudflare Worker IPs (HTTP 429).
-    // Active high-capacity CDN origin for all /anime/ segments and playlists is cdn.imgnex.top.
     if (host.endsWith('.snapcdn.top') && pathname.startsWith('/anime/')) {
       parsed.host = 'cdn.imgnex.top';
       return parsed.toString();
     }
 
-    // Dead buzz mirrors
     const isDeadBuzz = host.includes('zaplume.buzz') || host.includes('mewstream.buzz');
     if (isDeadBuzz || (host.endsWith('.click') && !host.includes('akirax.buzz'))) {
       parsed.host = 'cdn.imgnex.top';
@@ -121,6 +203,10 @@ function remapMirrorUrl(urlStr) {
 }
 
 export default {
+  /**
+   * Cloudflare Worker dedicated exclusively to video streaming proxying.
+   * Proxies HLS manifests, media chunks, AES encryption keys, and subtitles.
+   */
   async fetch(request, env) {
     // ── Handle CORS Preflight ───────────────────────────────────────────────
     if (request.method === 'OPTIONS') {
@@ -131,16 +217,6 @@ export default {
     const target = searchParams.get('url');
     const referer = searchParams.get('referer');
     const customProxy = searchParams.get('proxy') || request.headers.get('x-proxy-target');
-    const mode = searchParams.get('mode'); // 'scrape' = server-side HTML/JSON scraping mode
-    const isScrapeMode = mode === 'scrape';
-
-    // ── Secret Key Auth (Only for backend scraping mode) ────────────────────
-    if (isScrapeMode && env.WORKER_SECRET) {
-      const provided = request.headers.get('X-Worker-Secret');
-      if (provided !== env.WORKER_SECRET) {
-        return Response.json({ error: 'Unauthorized' }, { status: 401, headers: CORS_HEADERS });
-      }
-    }
 
     if (!target) {
       return Response.json({ error: 'Missing url parameter' }, { status: 400, headers: CORS_HEADERS });
@@ -151,11 +227,21 @@ export default {
       return Response.json({ error: 'Access to private network addresses is restricted' }, { status: 403, headers: CORS_HEADERS });
     }
 
+    // ── Enforce Streaming Domain Allowlist (Prevent Open Forward Proxy) ─────
+    if (!isAllowedStreamDomain(target, env)) {
+      return Response.json({ error: 'Target host is not permitted for streaming proxy' }, { status: 403, headers: CORS_HEADERS });
+    }
+
+    // ── Validate Custom Proxy against Pool (if configured) ─────────────────
+    const envProxies = env && env.PROXIES ? env.PROXIES.split(',').map(p => p.trim()).filter(Boolean) : [];
+    if (customProxy && envProxies.length > 0 && !envProxies.includes(customProxy)) {
+      return Response.json({ error: 'Specified proxy node is not authorized' }, { status: 403, headers: CORS_HEADERS });
+    }
+
     // ── Target URL Normalization & Stale Mirror Remapping ──────────────────
     let targetUrl = remapMirrorUrl(target);
 
     // ── Build Upstream Request Headers ─────────────────────────────────────
-    // Prefer forwarding client's real browser headers to maintain session consistency across chunks
     const clientUserAgent = request.headers.get('User-Agent');
     const clientSecChUa = request.headers.get('sec-ch-ua');
     const clientSecChUaMobile = request.headers.get('sec-ch-ua-mobile');
@@ -168,37 +254,9 @@ export default {
     upstreamHeaders.set('Accept', '*/*');
     upstreamHeaders.set('Accept-Encoding', 'gzip, deflate, br');
     upstreamHeaders.set('Accept-Language', clientAcceptLanguage || fp['Accept-Language']);
-    // Detect XHR/AJAX request: fetcher passes X-Requested-With for JSON endpoints
-    const isXhrRequest = request.headers.get('X-Requested-With') === 'XMLHttpRequest';
-    const incomingAccept = request.headers.get('Accept');
-
-    if (isScrapeMode && !isXhrRequest) {
-      // ── HTML page mode: full browser document navigation headers ────────────
-      upstreamHeaders.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
-      upstreamHeaders.set('Sec-Fetch-Dest', 'document');
-      upstreamHeaders.set('Sec-Fetch-Mode', 'navigate');
-      upstreamHeaders.set('Sec-Fetch-Site', 'none');
-      upstreamHeaders.set('Sec-Fetch-User', '?1');
-      upstreamHeaders.set('Upgrade-Insecure-Requests', '1');
-      upstreamHeaders.set('Cache-Control', 'max-age=0');
-      upstreamHeaders.set('Priority', 'u=0, i');
-      if (env.SCRAPE_COOKIE) upstreamHeaders.set('Cookie', env.SCRAPE_COOKIE);
-    } else if (isScrapeMode && isXhrRequest) {
-      // ── AJAX/XHR mode: same-origin XHR headers for /ajax/* endpoints ────────
-      upstreamHeaders.set('Accept', incomingAccept || 'application/json, text/javascript, */*; q=0.01');
-      upstreamHeaders.set('X-Requested-With', 'XMLHttpRequest');
-      upstreamHeaders.set('Sec-Fetch-Dest', 'empty');
-      upstreamHeaders.set('Sec-Fetch-Mode', 'cors');
-      upstreamHeaders.set('Sec-Fetch-Site', 'same-origin');
-      // Always set Referer to the target origin for AJAX requests
-      try { upstreamHeaders.set('Referer', new URL(target).origin + '/'); } catch (_) {}
-      if (env.SCRAPE_COOKIE) upstreamHeaders.set('Cookie', env.SCRAPE_COOKIE);
-    } else {
-      // ── Media/streaming mode ─────────────────────────────────────────────────
-      upstreamHeaders.set('Sec-Fetch-Dest', 'empty');
-      upstreamHeaders.set('Sec-Fetch-Mode', 'cors');
-      upstreamHeaders.set('Sec-Fetch-Site', 'cross-site');
-    }
+    upstreamHeaders.set('Sec-Fetch-Dest', 'empty');
+    upstreamHeaders.set('Sec-Fetch-Mode', 'cors');
+    upstreamHeaders.set('Sec-Fetch-Site', 'cross-site');
 
     if (fp['sec-ch-ua']) upstreamHeaders.set('sec-ch-ua', fp['sec-ch-ua']);
     if (fp['sec-ch-ua-mobile']) upstreamHeaders.set('sec-ch-ua-mobile', fp['sec-ch-ua-mobile']);
@@ -222,30 +280,25 @@ export default {
     let upstreamRes = null;
     let lastErr = null;
 
-    // Optional proxy list configured via worker environment variable PROXIES
-    const envProxies = env && env.PROXIES ? env.PROXIES.split(',').map(p => p.trim()).filter(Boolean) : [];
-
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const isMediaChunk = !/\.m3u8/i.test(targetUrl) && !/\.(vtt|srt|ass)($|\?)/i.test(targetUrl) && !isScrapeMode;
+        const isMediaChunk = !/\.m3u8/i.test(targetUrl) && !/\.(vtt|srt|ass)($|\?)/i.test(targetUrl);
         const fetchOptions = {
           headers: upstreamHeaders,
           redirect: 'follow',
           ...(isMediaChunk ? { cf: { cacheEverything: true, cacheTtl: 86400 } } : {}),
         };
 
-        // If Cloudflare proxy backend or custom proxy IP configured
         if (customProxy || envProxies.length > 0) {
           const selectedProxy = customProxy || envProxies[Math.floor(Math.random() * envProxies.length)];
           if (selectedProxy) {
-            // Note: CF Workers allow routing or custom HTTP headers for proxy gateways
             upstreamHeaders.set('X-Forwarded-Proxy', selectedProxy);
           }
         }
 
         upstreamRes = await fetch(targetUrl, fetchOptions);
 
-        // Fallback for 404 Not Found, 429 Too Many Requests, or 403 Forbidden on rate-limited/dead origins
+        // Fallback for 404, 429, or 403 on rate-limited/dead origins
         if (upstreamRes.status === 404 || upstreamRes.status === 429 || upstreamRes.status === 403) {
           try {
             const parsed = new URL(targetUrl);
@@ -298,18 +351,6 @@ export default {
     const contentType = upstreamRes.headers.get('content-type') || '';
     const isManifest = /\.m3u8/i.test(targetUrl) || contentType.includes('mpegurl') || contentType.includes('m3u8');
     const isSubtitle = /\.(vtt|srt|ass)$/i.test(targetUrl) || contentType.includes('vtt');
-
-    // ── Scrape Mode: return raw HTML/JSON for server-side processing ─────────
-    if (isScrapeMode) {
-      const scrapeHeaders = new Headers();
-      scrapeHeaders.set('Content-Type', contentType || 'text/html; charset=utf-8');
-      scrapeHeaders.set('Cache-Control', 'no-store');
-      Object.entries(CORS_HEADERS).forEach(([k, v]) => scrapeHeaders.set(k, v));
-      return new Response(upstreamRes.body, {
-        status: upstreamRes.status,
-        headers: scrapeHeaders,
-      });
-    }
 
     const resHeaders = new Headers();
     upstreamRes.headers.forEach((value, key) => {

@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { Readable } from 'stream';
-import { proxyPool, getRandomBrowserHeaders, isPrivateUrl } from '@/lib/proxy-pool';
+import {
+  proxyPool,
+  getRandomBrowserHeaders,
+  isPrivateUrlAsync,
+  isAllowedStreamDomain,
+} from '@/lib/proxy-pool';
+import { sanitizeUrlForLogging } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -69,16 +75,40 @@ export async function GET(req: Request) {
 
   const targetUrl = remapMirrorUrl(rawTargetUrl);
 
-  // ── SSRF Guard ─────────────────────────────────────────────────────────────
-  if (isPrivateUrl(targetUrl)) {
+  // ── SSRF & Domain Allowlist Guard ──────────────────────────────────────────
+  if (!isAllowedStreamDomain(targetUrl)) {
+    return NextResponse.json(
+      { ok: false, message: 'Forbidden: Streaming proxy is restricted to authorized media domains' },
+      { status: 403 }
+    );
+  }
+
+  if (await isPrivateUrlAsync(targetUrl)) {
     return NextResponse.json(
       { ok: false, message: 'Forbidden: Access to private or local network addresses is restricted' },
       { status: 403 }
     );
   }
 
+  // ── Outbound Proxy Authorization ───────────────────────────────────────────
+  let authorizedProxy: string | null = null;
+  if (customProxy) {
+    if (!proxyPool.isValidProxy(customProxy)) {
+      return NextResponse.json(
+        { ok: false, message: 'Forbidden: Specified outbound proxy is not in authorized pool' },
+        { status: 403 }
+      );
+    }
+    if (await isPrivateUrlAsync(customProxy)) {
+      return NextResponse.json(
+        { ok: false, message: 'Forbidden: Outbound proxy points to a private network address' },
+        { status: 403 }
+      );
+    }
+    authorizedProxy = customProxy;
+  }
+
   // ── Build Base Headers ─────────────────────────────────────────────────────
-  // Forward client browser headers if provided
   const clientUserAgent = req.headers.get('user-agent');
   const clientSecChUa = req.headers.get('sec-ch-ua');
   const clientSecChUaMobile = req.headers.get('sec-ch-ua-mobile');
@@ -104,10 +134,9 @@ export async function GET(req: Request) {
     reqHeaders['Referer'] = referer;
     try {
       reqHeaders['Origin'] = new URL(referer).origin;
-    } catch (_) { }
+    } catch { }
   }
 
-  // Forward Range header for partial content / video seeking support
   const rangeHeader = req.headers.get('range');
   if (rangeHeader) {
     reqHeaders['Range'] = rangeHeader;
@@ -120,8 +149,7 @@ export async function GET(req: Request) {
   let usedProxyUrl: string | null = null;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    // Select proxy node for this attempt
-    usedProxyUrl = customProxy || proxyPool.getNextProxy();
+    usedProxyUrl = authorizedProxy || proxyPool.getNextProxy();
     const httpsAgent = usedProxyUrl ? proxyPool.getAgent(usedProxyUrl) : undefined;
 
     const axiosConfig: AxiosRequestConfig = {
@@ -136,17 +164,14 @@ export async function GET(req: Request) {
       const res = await axios.get<Readable>(targetUrl, axiosConfig);
       response = res;
 
-      // If upstream returned 403 / 429 / 5xx, report failure to pool & retry next node
       if (res.status === 403 || res.status === 429 || res.status >= 500) {
         if (usedProxyUrl) proxyPool.reportFailure(usedProxyUrl);
 
         if (attempt < maxAttempts) {
-          // Exponential backoff
           await new Promise((r) => setTimeout(r, attempt * 300));
           continue;
         }
       } else {
-        // Successful response
         if (usedProxyUrl) proxyPool.reportSuccess(usedProxyUrl);
         break;
       }
@@ -161,24 +186,24 @@ export async function GET(req: Request) {
     }
   }
 
-  // If all retry attempts failed with exception
+  const safeTargetUrl = sanitizeUrlForLogging(targetUrl);
+
   if (!response) {
-    console.error(`[Proxy Error] All ${maxAttempts} attempts failed for ${targetUrl}:`, lastError);
+    console.error(`[Proxy Error] All ${maxAttempts} attempts failed for ${safeTargetUrl}:`, lastError?.message);
     return NextResponse.json(
-      { ok: false, message: `Proxy failed after ${maxAttempts} attempts`, detail: lastError?.message, url: targetUrl },
+      { ok: false, message: `Proxy failed after ${maxAttempts} attempts`, detail: lastError?.message, url: safeTargetUrl },
       { status: 502 }
     );
   }
 
-  // Forward upstream block or failure status if final attempt still blocked
   if (response.status === 403 || response.status === 401) {
-    console.error(`[Proxy] Upstream blocked (${response.status}) on ${targetUrl}`);
+    console.error(`[Proxy] Upstream blocked (${response.status}) on ${safeTargetUrl}`);
     return NextResponse.json(
       {
         ok: false,
         message: `Upstream server blocked the request (HTTP ${response.status}). Try using the Cloudflare Worker proxy instead.`,
         upstreamStatus: response.status,
-        url: targetUrl,
+        url: safeTargetUrl,
       },
       { status: response.status }
     );
@@ -186,7 +211,7 @@ export async function GET(req: Request) {
 
   if (response.status >= 400) {
     return NextResponse.json(
-      { ok: false, message: `Upstream error: HTTP ${response.status}`, upstreamStatus: response.status, url: targetUrl },
+      { ok: false, message: `Upstream error: HTTP ${response.status}`, upstreamStatus: response.status, url: safeTargetUrl },
       { status: response.status }
     );
   }
@@ -195,7 +220,6 @@ export async function GET(req: Request) {
   const resHeaders = new Headers();
   const contentType = (response.headers['content-type'] as string) || '';
 
-  // Copy non-hop-by-hop response headers
   Object.entries(response.headers).forEach(([key, val]) => {
     const lowerKey = key.toLowerCase();
     if (!HOP_BY_HOP_HEADERS.has(lowerKey) && val !== undefined) {
@@ -203,10 +227,26 @@ export async function GET(req: Request) {
     }
   });
 
-  resHeaders.set('Access-Control-Allow-Origin', '*');
+  const requestOrigin = req.headers.get('origin');
+  const allowedOriginEnv = process.env.CORS_ALLOWED_ORIGIN || process.env.CORS_ALLOWED_ORIGINS || '*';
+  let corsOrigin = '*';
+  if (allowedOriginEnv !== '*') {
+    const allowed = allowedOriginEnv.split(',').map(s => s.trim());
+    if (requestOrigin && allowed.includes(requestOrigin)) {
+      corsOrigin = requestOrigin;
+    } else {
+      corsOrigin = allowed[0] || '';
+    }
+  }
+
+  if (corsOrigin) {
+    resHeaders.set('Access-Control-Allow-Origin', corsOrigin);
+  }
   resHeaders.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
   resHeaders.set('Access-Control-Allow-Headers', '*');
-  resHeaders.set('X-Accel-Buffering', 'no'); // Disable reverse proxy buffering
+  resHeaders.set('X-Content-Type-Options', 'nosniff');
+  resHeaders.set('X-Frame-Options', 'SAMEORIGIN');
+  resHeaders.set('X-Accel-Buffering', 'no');
 
   const isManifest = /\.m3u8/i.test(targetUrl) || contentType.includes('mpegurl') || contentType.includes('m3u8');
   const isSubtitle = /\.(vtt|srt|ass)$/i.test(targetUrl) || contentType.includes('vtt');
@@ -224,7 +264,6 @@ export async function GET(req: Request) {
     resHeaders.set('Content-Type', 'application/vnd.apple.mpegurl');
     resHeaders.set('Cache-Control', 'no-store, no-cache, must-revalidate');
 
-    // Read full playlist text
     const chunks: Uint8Array[] = [];
     const stream = response.data;
     for await (const chunk of stream) {
@@ -232,14 +271,11 @@ export async function GET(req: Request) {
     }
     const text = Buffer.concat(chunks).toString('utf-8');
     const baseUrl = new URL(targetUrl);
-
-    // Build base proxy URL path
     const proxyPath = `${origin}/api/proxy`;
 
     const rewrittenText = text
       .split('\n')
       .map((line) => {
-        // Rewrite URI attributes in HLS tags (keys, maps, subtitles)
         if (line.includes('URI=')) {
           line = line.replace(/URI=["']([^"']+)["']/g, (match, uri) => {
             try {
@@ -248,7 +284,7 @@ export async function GET(req: Request) {
 
               let proxied = `${proxyPath}?url=${encodeURIComponent(keyUrl)}`;
               if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
-              if (customProxy) proxied += `&proxy=${encodeURIComponent(customProxy)}`;
+              if (authorizedProxy) proxied += `&proxy=${encodeURIComponent(authorizedProxy)}`;
               return `URI="${proxied}"`;
             } catch {
               return match;
@@ -259,14 +295,13 @@ export async function GET(req: Request) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('#')) return line;
 
-        // Media segment or sub-playlist line
         try {
           let segmentUrl = trimmed.startsWith('http') ? trimmed : new URL(trimmed, baseUrl).toString();
           segmentUrl = remapMirrorUrl(segmentUrl);
 
           let proxied = `${proxyPath}?url=${encodeURIComponent(segmentUrl)}`;
           if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
-          if (customProxy) proxied += `&proxy=${encodeURIComponent(customProxy)}`;
+          if (authorizedProxy) proxied += `&proxy=${encodeURIComponent(authorizedProxy)}`;
           return proxied;
         } catch {
           return line;
@@ -291,7 +326,6 @@ export async function GET(req: Request) {
   resHeaders.set('Content-Type', isRealMedia ? contentType : 'application/octet-stream');
   resHeaders.set('Cache-Control', 'public, max-age=7200, immutable');
 
-  // Convert Node readable stream to Web ReadableStream for zero-copy streaming
   const webStream = Readable.toWeb(response.data) as ReadableStream<Uint8Array>;
 
   return new Response(webStream, {

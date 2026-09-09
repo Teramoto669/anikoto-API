@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeSearch } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validateKeyword, validatePage } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,13 +21,13 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const keyword = searchParams.get('keyword')?.trim();
+    const keyword = validateKeyword(searchParams.get('keyword'));
     const refresh = searchParams.get('refresh') === '1';
-    const page = parseInt(searchParams.get('page') || '1', 10);
+    const page = validatePage(searchParams.get('page'));
 
     if (!keyword) {
       return NextResponse.json(
-        { ok: false, message: 'keyword query parameter is required' },
+        { ok: false, message: 'Invalid or missing keyword query parameter' },
         { status: 400 }
       );
     }

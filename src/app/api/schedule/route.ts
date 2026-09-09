@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { scrapeSchedule } from '@/lib/scrapers/schedule.scraper';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
+import { validateTimezone } from '@/lib/validation';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,7 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const refresh = searchParams.get('refresh') === '1';
-    const tz = searchParams.has('tz') ? parseInt(searchParams.get('tz')!, 10) : 0;
+    const tz = validateTimezone(searchParams.get('tz'), 0);
     const images = searchParams.get('images') === 'true';
 
     const key = `schedule:tz${tz}:img:${images}`;

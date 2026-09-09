@@ -133,8 +133,19 @@ const DEFAULT_ALLOWED_STREAM_PATTERNS = [
   '*.lostproject.club',
   'bb.akirax.buzz',
   '*.akirax.buzz',
+  '*.zaplume.buzz',
+  '*.mewstream.buzz',
   '*.megaplay.buzz',
   '*.vidstream.buzz',
+  '*.xoticsky.top',
+  '*.owocdn.top',
+  '*.vidwish.live',
+  '*.megacloud.blog',
+  '*.megacloud.bloggy.click',
+  '*.vidtube.site',
+  '*.akamaized.net',
+  '*.anikoto.net',
+  '*.anikototv.to',
   '*.rapid-cloud.ru',
   '*.bunnycdn.ru',
   '*.streamwish.to',
@@ -142,6 +153,8 @@ const DEFAULT_ALLOWED_STREAM_PATTERNS = [
   '*.doodstream.com',
   '*.streamtape.com',
   '*.mp4upload.com',
+  '*.anipixcdn.co',
+  '*.chiaki.site',
 ];
 
 function isAllowedStreamDomain(targetUrl, env) {

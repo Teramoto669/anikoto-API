@@ -187,48 +187,52 @@ export async function isPrivateUrlAsync(targetUrl: string): Promise<boolean> {
 }
 
 // ── Streaming Domain Allowlist (Prevent Open Forward Proxy Abuse) ────────────
+// Trusted streaming player/embed origins
+const TRUSTED_REFERER_ROOTS = [
+  'megaplay.buzz',
+  'vidstream.buzz',
+  'megacloud.blog',
+  'akirax.buzz',
+  'vidwish.live',
+  'streamwish.to',
+  'filelions.to',
+  'doodstream.com',
+  'streamtape.com',
+  'mp4upload.com',
+  'anipixcdn.co',
+  'chiaki.site',
+  'anikoto.net',
+  'anikototv.to',
+];
+
+// Fast-path allowed CDN domains
 const DEFAULT_ALLOWED_STREAM_DOMAINS = [
   'cdn.imgnex.top',
   '*.imgnex.top',
   '*.snapcdn.top',
-  '*.lostproject.club',
-  'bb.akirax.buzz',
-  '*.akirax.buzz',
-  '*.zaplume.buzz',
-  '*.mewstream.buzz',
-  '*.megaplay.buzz',
-  '*.vidstream.buzz',
-  '*.xoticsky.top',
-  '*.owocdn.top',
-  '*.shiora.site',
-  '*.shiora.top',
+  '*.akamaized.net',
   '*.tiktokcdn.com',
   '*.byteoversea.com',
   '*.ibytedtos.com',
   '*.ibyteimg.com',
   '*.tiktokv.com',
-  '*.vidwish.live',
-  '*.megacloud.blog',
-  '*.megacloud.bloggy.click',
-  '*.vidtube.site',
-  '*.akamaized.net',
-  '*.anikoto.net',
-  '*.anikototv.to',
   '*.rapid-cloud.ru',
   '*.bunnycdn.ru',
-  '*.streamwish.to',
-  '*.filelions.to',
-  '*.doodstream.com',
-  '*.streamtape.com',
-  '*.mp4upload.com',
+  '*.xoticsky.top',
+  '*.owocdn.top',
+  '*.shiora.site',
+  '*.shiora.top',
+  '*.lostproject.club',
+  '*.vidtube.site',
   '*.anipixcdn.co',
   '*.chiaki.site',
 ];
 
-/**
- * Validates if the target URL host is on the streaming whitelist,
- * or matches dynamic media streaming characteristics and streaming context.
- */
+function getEtld1(hostname: string): string {
+  const parts = hostname.split('.');
+  return parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
+}
+
 export function isAllowedStreamDomain(targetUrl: string, referer?: string): boolean {
   try {
     const parsed = new URL(targetUrl);
@@ -243,7 +247,7 @@ export function isAllowedStreamDomain(targetUrl: string, referer?: string): bool
 
     if (envAllowed.includes('*')) return true;
 
-    // 1. Explicit domain whitelist check
+    // 1. Fast-path domain whitelist
     const allPatterns = [...DEFAULT_ALLOWED_STREAM_DOMAINS, ...envAllowed];
     for (const pattern of allPatterns) {
       if (pattern.startsWith('*.')) {
@@ -254,45 +258,50 @@ export function isAllowedStreamDomain(targetUrl: string, referer?: string): bool
       }
     }
 
-    // 2. Reject hazardous non-media file extensions
+    // 2. Block hazardous file extensions
     const blockedExts = ['.exe', '.dll', '.sh', '.bat', '.cmd', '.apk', '.zip', '.rar', '.7z', '.tar', '.gz', '.pdf', '.doc', '.docx', '.iso'];
     if (blockedExts.some((ext) => pathname.endsWith(ext))) {
       return false;
     }
 
-    // 3. Dynamic Media Pattern Matching (m3u8, ts, mp4, vtt, keys, and image-disguised video chunks)
+    // 3. Media pattern matching
     const isMediaFile =
       /\.(m3u8|ts|m4s|mp4|aac|m4a|vtt|srt|ass|key)($|\?)/i.test(pathname + search) ||
-      /\/seg-\d+/i.test(pathname) ||
-      /(\/anime\/|\/hls\/|\/stream\/).*\.(jpg|jpeg|png|image|webp)($|\?)/i.test(pathname + search) ||
+      /\/seg-[a-z0-9_.-]+/i.test(pathname) ||
+      /(\/anime\/|\/hls\/|\/stream\/).*\.(jpg|jpeg|png|image|webp|html|htm|txt|bin)($|\?)/i.test(pathname + search) ||
       pathname.includes('~tplv-');
 
-    // 4. Valid Streaming Context (legitimate player referer, stream path, or signed CDN token)
-    const hasStreamingContext = Boolean(
-      (referer && (
-        referer.includes('megaplay') ||
-        referer.includes('vidstream') ||
-        referer.includes('megacloud') ||
-        referer.includes('anikoto') ||
-        referer.includes('aonime') ||
+    if (!isMediaFile) return false;
+
+    // 4. Streaming context validation
+    let refererTrusted = false;
+    if (referer) {
+      try {
+        const refHost = new URL(referer).hostname.toLowerCase();
+        const refRoot = getEtld1(refHost);
+        refererTrusted = TRUSTED_REFERER_ROOTS.some(
+          (root) => refRoot === root || refHost.endsWith('.' + root)
+        ) ||
         referer.includes('/watch') ||
-        referer.includes('/stream')
-      )) ||
+        referer.includes('/stream') ||
+        referer.includes('anikoto') ||
+        referer.includes('aonime');
+      } catch {
+        refererTrusted = false;
+      }
+    }
+
+    const hasStreamingContext = refererTrusted ||
       pathname.includes('/anime/') ||
       pathname.includes('/hls/') ||
       pathname.includes('/stream/') ||
-      /\/seg-\d+/i.test(pathname) ||
+      /\/seg-[a-z0-9_.-]+/i.test(pathname) ||
       pathname.includes('~tplv-') ||
       parsed.searchParams.has('x-expires') ||
       parsed.searchParams.has('token') ||
-      parsed.searchParams.has('sig')
-    );
+      parsed.searchParams.has('sig');
 
-    if (isMediaFile && hasStreamingContext) {
-      return true;
-    }
-
-    return false;
+    return hasStreamingContext;
   } catch {
     return false;
   }

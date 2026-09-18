@@ -116,9 +116,84 @@ The bundled download client is served at **`/streamvault.html`** (alias: `/strea
 
 ---
 
+## 📥 StreamVault download client
+
+`public/streamvault.html` assembles an episode in the browser: it picks the **highest** playlist rung, fetches the
+segments and remuxes MPEG-TS into MP4 with the vendored `toMp4.js` muxer (`public/vendor/tomp4.min.js`, MIT —
+see `public/vendor/README.md`). Nothing is re-encoded, so video and audio quality are exactly what the CDN served
+(a clean remux is typically 4–8 % smaller only because TS packet padding is dropped).
+
+### Speed
+
+| Mechanism | Effect |
+| --- | --- |
+| Adaptive concurrency (AIMD) | Starts at your setting and ramps toward 16 in-flight segments, halving immediately on `429`/errors |
+| Pre-flight probe | Segment 0 is fetched through the full host/transport ladder first, so a dead CDN host is discovered in seconds and benched instead of stalling the run |
+| Host cooldown | Hosts that returned 403/404/bad bytes are skipped for 90 s (20 s for soft failures) — no repeated probing of dead mirrors, and healthy hosts never pay for speculative mirror requests |
+| Streamed `/api/proxy` | The proxy pipes upstream bytes straight through instead of buffering whole segments (TTFB is now the CDN's, not the full segment download) |
+| Muxer prefetch + per-slot mode memory | The muxer loads while segments download, and the working transport (`cf`/`proxy`/`direct`) plus host stick per slot |
+
+### Safety and privacy
+
+- **Only media is downloaded.** Segments must start with a valid MPEG-TS sync byte, `ftyp` or `moof`; direct downloads
+  are sniffed by container (`MP4`, `Matroska/WebM`, `MPEG-TS`, `Ogg`, `AVI`, `FLV`, `MP3`) and anything else —
+  executables, ZIPs, HTML/JSON error pages — is rejected with a clear message instead of being saved as a video.
+- **No third-party requests.** The page loads no fonts, analytics or remote scripts; the muxer is vendored in this
+  repository. Fetches are cookie-less (`credentials: 'omit'`), send no referrer, and the page ships a
+  `Content-Security-Policy` restricting scripts/styles/frames to the page itself.
+- **Playlist hygiene.** These CDNs interleave playlists with entries that are not video: ad creatives
+  (`…~tplv-….image` on the TikTok ad CDNs), thumbnail/poster images and subtitle sidecars. Those lines are dropped
+  before anything is queued — the downloader never fetches them (an ad-injected playlist used to cost hundreds of
+  requests to ad CDNs) and the proxy leaves their URIs un-rewritten.
+- **URL guard.** Playlist and user-supplied URLs must be `http(s)`, public-host and credential-free — `javascript:`,
+  `data:`, `file:`, `blob:`, embedded credentials and LAN/loopback targets are refused.
+- **Verifiable output.** Every finished file is hashed (SHA-256) and the digest is shown in the log and next to the
+  completed item, plus a remux ratio in the log (a clean TS→MP4 remux keeps ~90–96 % of the input).
+- **Honest file names.** A pasted `.m3u8` is detected and routed through the segment downloader; anything else keeps the
+  extension its container actually has (`.mp4`, `.ts`, `.mkv`, …) instead of being relabelled.
+
+---
+
+### If the CDN refuses you (VPN / region)
+
+Some of these hosts are picky about who connects. A `403`/`401` in the log means the CDN rejected *this
+connection*, not that the host is gone: datacenter ranges and VPN exit IPs are often refused outright. Because the
+proxy runs on your own machine, both the direct and the `/api/proxy` path leave through the same VPN, so it is
+worth trying a different exit (or turning the VPN off for one download) before blaming the mirrors. The client
+already says so: a failure that ends in 401/403/451 is reported as *"the CDN refused this connection — try another
+VPN exit, or turn the VPN off"*, while a 404 stays a plain failure.
+
+DNS-level filtering (Proton NetShield, Pi-hole, …) has little to bite on here: the page fetches media and key files
+only, never ad or tracker hosts, because playlists are filtered before anything is queued. Host cooldowns live in
+memory for the current page and are cleared when you save settings, so after switching exits a reload is enough.
+Both the direct and `/api/proxy` paths leave through your machine, so they see the same VPN exit — a refusal in the
+log therefore points at the exit, not at the client.
+
+## ✅ Offline checks
+
+Both suites run on Node built-ins only (no browser, no network) and fail loudly if a guarantee above regresses:
+
+```bash
+npm run check            # both of the below
+npm run check:streamvault  # privacy surface, URL guard, container sniffing, muxer provenance (sha256), concurrency
+npm run check:proxy        # /api/proxy SSRF guard, redirect hop validation, stream watchdog semantics
+```
+
+---
+
 ## ☁️ Cloudflare Worker Proxy (Optional)
 
 By default, the API provides an internal streaming proxy at `/api/proxy` to bypass CORS. For better performance and free unlimited bandwidth (100k req/day free tier), you can deploy the included Cloudflare Worker and configure the API to use it automatically.
+
+### How `/api/proxy` behaves
+
+| Aspect | Behaviour |
+| --- | --- |
+| Transfer | Media is piped straight from the CDN to the client — nothing is buffered, re-encoded or compression-decoded twice (playlists are read fully, since they get rewritten) |
+| Headers | `Range` → `206`/`Content-Range`, `Accept-Ranges`, `ETag`, `Last-Modified` are forwarded; `Content-Length` is only forwarded when the upstream body is identity-encoded, otherwise the framework's transparent decompression would make it lie and clients would truncate |
+| Redirects | Followed manually (max 5 hops) so every hop is checked against the SSRF guard |
+| Timeouts | 20 s to answer with headers, 20 s to the first body chunk, then 120 s of tolerated silence mid-transfer — re-armed on every chunk, so long downloads are never cut short |
+| Target policy | `http(s)` only, no credentials in the URL, and loopback/RFC1918/link-local/metadata targets are refused when `NODE_ENV=production`. Set `PROXY_ALLOW_PRIVATE_TARGETS=1` to allow them deliberately (local dev allows them by default so mock upstreams work) |
 
 1. Deploy the worker from the `cloudflare-worker/` directory:
    ```bash
@@ -162,7 +237,9 @@ src/
 │   ├── extractors.ts     # Cheerio extraction helpers
 │   └── scrapers/         # Per-endpoint scraping logic
 public/
-└── openapi.yaml          # OpenAPI 3.0 specification
+├── openapi.yaml          # OpenAPI 3.0 specification
+├── streamvault.html      # Browser download client (segment fetch + remux UI)
+└── vendor/               # Vendored browser deps (toMp4.js muxer, MIT) + build notes
 ```
 
 ---

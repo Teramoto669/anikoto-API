@@ -3,10 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="referrer" content="no-referrer">
+<!--
+  Privacy + safety posture (everything this page loads is same-origin):
+    · No font CDN, no analytics, no tag managers, no remote scripts.
+    · The MP4 muxer is vendored at ./vendor/tomp4.min.js (MIT, see vendor/LICENSE-tomp4).
+    · Only the user's own API host and the streaming CDNs the API returns are contacted.
+  connect-src stays open because those CDN hosts are discovered at runtime; every other
+  directive is locked to this origin.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src *; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
 <title>StreamVault</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='80'>↓</text></svg>">
 <style>
   /* Professional utility UI — pink/purple accents on neutral base, 0 radius */
@@ -34,8 +41,9 @@
     --bad-bg: #fdeceb;
     --focus: rgba(109, 63, 168, 0.2);
     --shadow: 0 1px 2px rgba(31, 21, 40, 0.04);
-    --font: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-    --mono: "IBM Plex Mono", "SF Mono", ui-monospace, Consolas, monospace;
+    /* System fonts only — this page never calls out to a font CDN */
+    --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, "Liberation Mono", monospace;
     --space: 12px;
     --w: 960px;
   }
@@ -568,7 +576,7 @@
       <div class="brand">
         <div class="mark" aria-hidden="true">↓</div>
         <h1>StreamVault</h1>
-        <span class="ver">v6.5</span>
+        <span class="ver">v6.7</span>
       </div>
       <div class="top-actions">
         <div class="pill" id="apiSt" title="API status">
@@ -610,7 +618,7 @@
             <button type="button" class="btn-secondary" onclick="goAll()">All episodes</button>
           </div>
         </div>
-        <p class="hint" id="urlHint">Highest listed quality is selected automatically (usually 1080p).</p>
+        <p class="hint" id="urlHint">Highest listed quality is selected automatically (usually 1080p) and copied through untouched.</p>
       </div>
     </section>
 
@@ -696,7 +704,7 @@
       </div>
       <div class="card-b">
         <div class="log" id="logBox"></div>
-        <p class="fine">Output is standard MP4 (H.264 + AAC). Source quality is not re-encoded down.</p>
+        <p class="fine">Output is standard MP4 (H.264 + AAC) — the original streams are remuxed, never re-encoded, so video and audio quality are unchanged. Nothing is uploaded: files are assembled and saved in your browser, and the page makes no third-party requests (no analytics, no font CDN, muxer vendored locally).</p>
       </div>
     </section>
   </main>
@@ -721,8 +729,12 @@
       </div>
       <div class="field">
         <label for="cfgConc">Segment concurrency</label>
-        <input id="cfgConc" type="number" min="2" max="16" value="10">
-        <small>2–16. Higher is faster; lower if you hit rate limits.</small>
+        <input id="cfgConc" type="number" min="2" max="32" value="10">
+        <small>2–32. Starts here; with auto-tune on it can ramp up to 16 (or your value, if higher).</small>
+      </div>
+      <div class="field row-between">
+        <label for="cfgAdaptive" style="margin:0">Auto-tune speed (recommended)</label>
+        <input id="cfgAdaptive" type="checkbox" checked>
       </div>
       <div class="field">
         <label for="cfgRetries">Retries</label>
@@ -745,19 +757,28 @@
   </div>
 </div>
 
+<!-- MP4 remuxer: vendored from @invintusmedia/tomp4 1.7.4 (MIT, see vendor/LICENSE-tomp4).
+     A classic script tag (not a CDN, not an ES module) so it also works from file:// -->
+<script src="./vendor/tomp4.min.js"></script>
 <script>
-/* StreamVault v6.5 — faster path, same max quality, simpler UI */
+/* StreamVault v6.7 — faster path, same max quality, simpler UI */
 const ORIGIN = window.location.origin;
 const IS_DEPLOYED = /vercel\.app|onrender\.com|localhost|127\.0\.0\.1/.test(ORIGIN);
 let API = IS_DEPLOYED ? '' : 'https://anikoto-api-hte0.onrender.com';
 let CF_WORKER = '';
 let AUTO_SAVE = true;
-let SEG_CONCURRENCY = 10;
+let SEG_CONCURRENCY = 10;   // starting parallelism (auto-tune may scale it 4…32)
+let ADAPTIVE = true;        // AIMD controller on segment concurrency
 let MAX_RETRIES = 3;
 let SLOT_STAGGER_MS = 800;
 let MAX_REQUEUE = 2;
+const CONC_MIN = 4;
+const CONC_MAX = 32;
+const MAX_KEPT_BLOBS = 2;   // in-page copies kept in the Completed list
 
-const CDN_MIRROR_HOSTS = ['cdn.mewstream.buzz'];
+// Host-only replacements tried (in order) when a CDN host is known-unreliable.
+// Same rewrite the API extractor applies: mewstream.buzz -> 1oe.lostproject.club.
+const CDN_MIRROR_HOSTS = ['1oe.lostproject.club', 'cdn.mewstream.buzz'];
 const BLOCKED_HOST_RE = /kryntal\.top$|cloudbuzz\.lol$|akirax\.buzz$|vidtube\.site$/i;
 
 const Slots = [null, null];
@@ -779,11 +800,12 @@ function closeSettings() { $('cfgModal').classList.remove('open'); }
 
 function loadCfg() {
   try {
-    const c = JSON.parse(localStorage.getItem('sv65') || localStorage.getItem('sv64') || localStorage.getItem('sv63') || '{}');
+    const c = JSON.parse(localStorage.getItem('sv66') || localStorage.getItem('sv65') || localStorage.getItem('sv64') || localStorage.getItem('sv63') || '{}');
     if (c.api !== undefined) API = c.api;
     if (c.cf !== undefined) CF_WORKER = c.cf;
     if (c.auto !== undefined) AUTO_SAVE = c.auto;
     if (c.conc) SEG_CONCURRENCY = c.conc;
+    if (c.adaptive !== undefined) ADAPTIVE = c.adaptive;
     if (c.retries !== undefined) MAX_RETRIES = c.retries;
     if (c.stagger !== undefined) SLOT_STAGGER_MS = c.stagger;
     if (c.requeue !== undefined) MAX_REQUEUE = c.requeue;
@@ -792,6 +814,7 @@ function loadCfg() {
   $('cfgCf').value = CF_WORKER || '';
   $('cfgAuto').checked = AUTO_SAVE;
   $('cfgConc').value = SEG_CONCURRENCY;
+  $('cfgAdaptive').checked = ADAPTIVE;
   $('cfgRetries').value = MAX_RETRIES;
   $('cfgStagger').value = SLOT_STAGGER_MS;
   $('cfgRequeue').value = MAX_REQUEUE;
@@ -803,16 +826,18 @@ function saveCfg() {
   API = v ? v.replace(/\/$/, '') : '';
   CF_WORKER = $('cfgCf').value.trim().replace(/\/$/, '');
   AUTO_SAVE = $('cfgAuto').checked;
-  SEG_CONCURRENCY = Math.max(2, Math.min(16, parseInt($('cfgConc').value) || 10));
+  SEG_CONCURRENCY = Math.max(2, Math.min(CONC_MAX, parseInt($('cfgConc').value) || 10));
+  ADAPTIVE = $('cfgAdaptive').checked;
   MAX_RETRIES = Math.max(0, Math.min(8, parseInt($('cfgRetries').value) || 3));
   SLOT_STAGGER_MS = Math.max(0, Math.min(15000, parseInt($('cfgStagger').value) || 800));
   MAX_REQUEUE = Math.max(0, Math.min(5, parseInt($('cfgRequeue').value) || 2));
-  localStorage.setItem('sv65', JSON.stringify({
+  localStorage.setItem('sv66', JSON.stringify({
     api: API, cf: CF_WORKER, auto: AUTO_SAVE,
-    conc: SEG_CONCURRENCY, retries: MAX_RETRIES,
+    conc: SEG_CONCURRENCY, adaptive: ADAPTIVE, retries: MAX_RETRIES,
     stagger: SLOT_STAGGER_MS, requeue: MAX_REQUEUE
   }));
   stickyPath = null;
+  hostCooldown.clear();
   closeSettings();
   toast('Settings saved');
   testApi();
@@ -881,23 +906,150 @@ function withHost(url, host) {
   return u.toString();
 }
 
+/* -------- Safety guards -------- */
+
+/* Playlist hygiene — ByteDance/Volcengine-style CDNs interleave non-video entries
+ * with the media playlist: ad creatives (`…~tplv-….image?lk3s=…&x-signature=…`)
+ * served from the TikTok ad CDNs, thumbnail/spritesheet streams and subtitle
+ * sidecars. They are not decodable media; fetching them as if they were segments
+ * pulls hundreds of ad-CDN requests through the host ladder and feeds junk to the
+ * muxer, so they are dropped before anything is queued.
+ */
+/** Attribute-only HLS tags that some encoders still follow with a bare URI line. */
+const NON_SEGMENT_TAGS = /^#EXT-X-(?:IMAGE-STREAM-INF|I-FRAME-STREAM-INF)/i;
+/** Images, subtitles and web assets, by extension or ByteDance `.image` suffix. */
+const NON_MEDIA_URL_RE = /\.(?:image|png|jpe?g|gif|webp|avif|bmp|svg|ico|vtt|srt|ass|ssa|html?|json|xml|css|js|txt)(?:[?#]|$)/i;
+
+/** True when a playlist line can never be a media segment worth downloading. */
+function isNonMediaEntry(line, prevTag) {
+  if (!line || line.startsWith('#')) return false;
+  if (prevTag && NON_SEGMENT_TAGS.test(prevTag)) return true;
+  return NON_MEDIA_URL_RE.test(line);
+}
+
+/**
+ * Loopback / RFC1918 / link-local / cloud metadata. Anchored, because a prefix match
+ * would also reject legitimate public hosts such as `10.example.com`. WHATWG
+ * normalises IPv4 shorthands (`127.1`, `2130706433`, `0x7f.1`) to dotted quads before
+ * the guard sees the hostname, so matching the parsed host covers those too.
+ */
+const PRIVATE_HOST_RE = /^(?:localhost|.*\.localhost|0\.0\.0\.0|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|169\.254\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|\[::1\]|\[fe80:[0-9a-f:]+\])\.?$/i;
+
+/**
+ * Reject anything that is not plain http(s) media on a public host:
+ * blocks data:/blob:/file:/javascript: URLs, credentials embedded in the URL and
+ * LAN/loopback targets. Playlist contents are untrusted input, so every URL the
+ * player is about to fetch goes through this first.
+ */
+function assertSafeUrl(raw) {
+  let parsed;
+  try { parsed = new URL(String(raw)); } catch (_) { throw new Error('Unparsable URL: ' + String(raw).slice(0, 80)); }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('Blocked scheme ' + parsed.protocol);
+  if (parsed.username || parsed.password) throw new Error('Blocked credentials in media URL');
+  if (PRIVATE_HOST_RE.test(parsed.hostname)) throw new Error('Blocked private host ' + parsed.hostname);
+  return parsed.toString();
+}
+
+/**
+ * Hosts that recently failed get skipped for a while instead of retried.
+ * Only failures that are evidence about the *host* count:
+ *   - a direct fetch that failed (proxy failures can be our server's IP being blocked), or
+ *   - a bad body (bytes arrived but were not media, whatever the transport).
+ * `viaProxy` failures are therefore ignored, otherwise one blocked proxy request
+ * would bench a CDN host that still works from the browser.
+ */
+const hostCooldown = new Map();
+function noteHostFailure(host, detail, viaProxy) {
+  if (!host) return;
+  const content = /bad|body/.test(String(detail));
+  if (viaProxy && !content) return;
+  const hard = content || /:40[134]|:41[01]/.test(String(detail));
+  const ms = hard ? 90000 : 20000;
+  hostCooldown.set(host, Math.max(hostCooldown.get(host) || 0, Date.now() + ms));
+}
+function hostIsCooling(host) {
+  const until = hostCooldown.get(host);
+  if (!until) return false;
+  if (until <= Date.now()) { hostCooldown.delete(host); return false; }
+  return true;
+}
+
+/* -------- Adaptive concurrency (AIMD) -------- */
+
+/**
+ * Additive-increase / multiplicative-decrease controller.
+ * Ramps the number of in-flight segment requests up while the CDN keeps up and
+ * halves it on errors or 429s. Pure scheduling — the bytes downloaded, and the
+ * quality of them, are identical at any concurrency.
+ */
+function makeConcurrency(start) {
+  const configured = Math.max(CONC_MIN, Math.min(CONC_MAX, start || SEG_CONCURRENCY));
+  // Auto-tune never exceeds the user's own number when that number is already
+  // generous (>=16); otherwise it may boost a modest setting up to 16.
+  const ceiling = Math.max(configured, Math.min(CONC_MAX, 16));
+  let limit = configured;
+  let okStreak = 0, errStreak = 0;
+  return {
+    get limit() { return limit; },
+    get ceiling() { return ceiling; },
+    ok() {
+      if (!ADAPTIVE || limit >= ceiling) return;
+      okStreak++; errStreak = 0;
+      // Ramp fast while the CDN is clearly happy, slower as we approach the ceiling.
+      const need = limit < 12 ? 4 : limit < 20 ? 8 : 16;
+      if (okStreak >= need) { limit++; okStreak = 0; }
+    },
+    fail(detail) {
+      if (!ADAPTIVE) return;
+      errStreak++; okStreak = 0;
+      const rateLimited = /:429/.test(String(detail));
+      if (rateLimited || errStreak >= 3) {
+        const next = Math.max(CONC_MIN, Math.floor(limit / 2));
+        if (next !== limit) limit = next;
+        errStreak = 0;
+      }
+    },
+    lower() { limit = Math.max(CONC_MIN, Math.floor(limit / 2)); }
+  };
+}
+
+/** SHA-256 of the finished file — lets the user verify what they got. */
+async function sha256Hex(buf) {
+  try {
+    if (!crypto?.subtle) return '';
+    const d = await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (_) { return ''; }
+}
+
+const UNRELIABLE_HOST_RE = /mewstream|kryntal|cloudbuzz|akirax|vidtube/i;
+
 function buildUrlCandidates(url) {
   const real = unwrapProxyUrl(url);
   const out = [];
   const seen = new Set();
-  const push = u => { if (u && !seen.has(u)) { seen.add(u); out.push(u); } };
+  // Unwrapping or host-swapping can surface a URL the caller never validated
+  // (e.g. an /api/proxy?url=… entry pointing at a LAN address), so every candidate
+  // is re-checked by the same guard before it can leave this function.
+  const safe = u => { try { assertSafeUrl(u); return true; } catch (_) { return false; } };
+  const push = u => { if (u && !seen.has(u) && safe(u)) { seen.add(u); out.push(u); } };
   try {
     const host = new URL(real).hostname;
-    // Prefer sticky working host first
-    if (stickyPath?.host) push(withHost(real, stickyPath.host));
-    for (const h of CDN_MIRROR_HOSTS) push(withHost(real, h));
+    // Known-good host first (learned during this session).
+    if (stickyPath?.host && stickyPath.host !== host) push(withHost(real, stickyPath.host));
+    // Only add mirror hosts when this host is one that actually goes dead — a healthy
+    // host must not pay for extra speculative requests on every segment.
+    if (isBlockedHost(host) || UNRELIABLE_HOST_RE.test(host)) {
+      for (const h of CDN_MIRROR_HOSTS) if (h !== host) push(withHost(real, h));
+    }
     push(real);
     if (isBlockedHost(host)) {
       // move original blocked host to end
       const i = out.indexOf(real);
       if (i >= 0 && i < out.length - 1) { out.splice(i, 1); out.push(real); }
     }
-  } catch (_) { push(real); }
+  } catch (_) {}
+  if (safe(real)) { if (!seen.has(real)) out.push(real); }
   return out;
 }
 
@@ -958,9 +1110,28 @@ async function fetchOnce(real, referer, mode, signal) {
   return fetch(real, { signal, mode: 'cors', credentials: 'omit', referrerPolicy: 'no-referrer' });
 }
 
-async function smartFetch(idx, targetUrl, referer, { isSegment = false, signal } = {}) {
-  const candidates = buildUrlCandidates(targetUrl);
+/**
+ * Resilient media fetch.
+ *
+ * Tries hosts (sticky working host first) × transports (sticky mode first:
+ * cf worker → own API proxy → direct CORS). Hosts that failed hard are skipped
+ * for a while so a dead mirror isn't re-probed for every one of ~300 segments.
+ *
+ * Returns a Response for manifests, or a Uint8Array when `bytesOnly` is set
+ * (segment path — avoids wrapping the payload in a Response just to unwrap it).
+ */
+async function smartFetch(idx, targetUrl, referer, { isSegment = false, bytesOnly = false, signal } = {}) {
+  const safeUrl = assertSafeUrl(targetUrl);
+  const allCandidates = buildUrlCandidates(safeUrl);
+
+  // Prefer hosts that are not cooling down; if everything is cooling, try anyway
+  let candidates = allCandidates.filter((c) => { try { return !hostIsCooling(new URL(c).hostname); } catch (_) { return false; } });
+  let ignoringCooldown = false;
+  if (!candidates.length) { candidates = allCandidates; ignoringCooldown = true; }
+
+  const slot = Slots[idx];
   const modes = [];
+  if (slot?._sticky?.mode) modes.push(slot._sticky.mode);
   if (stickyPath?.mode) modes.push(stickyPath.mode);
   if (CF_WORKER) modes.push('cf');
   modes.push('proxy', 'direct');
@@ -974,26 +1145,36 @@ async function smartFetch(idx, targetUrl, referer, { isSegment = false, signal }
       if (mode === 'cf' && !CF_WORKER) continue;
       try {
         const r = await fetchOnce(cand, referer, mode, signal);
-        if (!r.ok) { errors.push(`${host}/${mode}:${r.status}`); continue; }
+        if (!r.ok) {
+          errors.push(`${host}/${mode}:${r.status}`);
+          if (!ignoringCooldown) noteHostFailure(host, `${host}/${mode}:${r.status}`, mode !== 'direct');
+          continue;
+        }
 
-        if (isSegment) {
+        if (isSegment || bytesOnly) {
           const buf = await r.arrayBuffer();
-          if (!isValidMediaBytes(buf)) { errors.push(`${host}/${mode}:bad`); continue; }
+          if (!isValidMediaBytes(buf)) {
+            errors.push(`${host}/${mode}:bad`);
+            if (!ignoringCooldown) noteHostFailure(host, `${host}/${mode}:bad`, mode !== 'direct');
+            continue;
+          }
           stickyPath = { mode, host };
-          return new Response(buf, { status: 200, headers: { 'Content-Type': 'application/octet-stream' } });
+          if (slot) slot._sticky = { mode, host };
+          return bytesOnly ? new Uint8Array(buf) : new Response(buf, { status: 200, headers: { 'Content-Type': 'application/octet-stream' } });
         }
 
         const text = await r.text();
         if (!looksLikeM3u8(text) || looksLikeErrorBody(text)) {
-          // try public cors only for manifests as last ditch on this candidate
           errors.push(`${host}/${mode}:body`);
+          if (!ignoringCooldown) noteHostFailure(host, `${host}/${mode}:body`, mode !== 'direct');
           continue;
         }
         let out = text;
-        // Always rewrite blocked segment hosts onto preferred mirror
+        // Always rewrite blocked segment hosts onto the preferred mirror
         const mirrorHost = stickyPath?.host || CDN_MIRROR_HOSTS[0];
         out = rewritePlaylistHosts(out, mirrorHost);
         stickyPath = { mode, host: /mewstream/i.test(host) ? host : (isBlockedHost(host) ? mirrorHost : host) };
+        if (slot) slot._sticky = { mode, host };
         if (Slots[idx] && isBlockedHost((() => { try { return new URL(unwrapProxyUrl(targetUrl)).hostname; } catch (_) { return ''; } })())) {
           Slots[idx].via = 'mirror';
         }
@@ -1005,28 +1186,26 @@ async function smartFetch(idx, targetUrl, referer, { isSegment = false, signal }
     }
   }
 
-  // Manifest-only public CORS fallback (slow; rarely needed)
-  if (!isSegment) {
-    for (const cand of candidates) {
-      for (const m of [
-        `https://corsproxy.io/?${encodeURIComponent(cand)}`,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(cand)}`
-      ]) {
-        try {
-          const r = await fetch(m, { signal });
-          if (!r.ok) continue;
-          const t = await r.text();
-          if (looksLikeM3u8(t)) {
-            return new Response(rewritePlaylistHosts(t, CDN_MIRROR_HOSTS[0]), {
-              status: 200, headers: { 'Content-Type': 'application/vnd.apple.mpegurl' }
-            });
-          }
-        } catch (e) { if (signal?.aborted) throw e; }
-      }
-    }
-  }
+  throw new Error(`All paths failed (${errors.slice(0, 4).join(' | ')})${refusalNote(errors.join(' '))}`);
+}
 
-  throw new Error(`All paths failed (${errors.slice(0, 4).join(' | ')})`);
+/**
+ * A 401/403/451 means the CDN refused *this connection* — region lock, datacenter
+ * range or VPN exit IP. That is fixable, so say it. A 404/410 is a host that is
+ * simply gone, where advice would be noise.
+ */
+function refusalNote(statusOrDetail, url = '') {
+  const m = /(?:^|[^0-9])(401|403|451)(?![0-9])/.exec(String(statusOrDetail));
+  if (!m) return '';
+  if (url) {
+    try {
+      // A refusal from our own API is not a CDN turning the browser away.
+      const host = new URL(unwrapProxyUrl(String(url))).hostname;
+      const own = new URL(API || location.origin).hostname;
+      if (host === own || /^(localhost|127\.|\[::1\])/.test(host)) return '';
+    } catch (_) {}
+  }
+  return ` — the CDN refused this connection (${m[1]}): try another VPN exit, or turn the VPN off`;
 }
 
 async function fetchWithRetry(url, opts = {}, retries = MAX_RETRIES, label = '') {
@@ -1040,7 +1219,7 @@ async function fetchWithRetry(url, opts = {}, retries = MAX_RETRIES, label = '')
         if (label) log(`${label}: ${r.status}, retry ${attempt + 1}/${retries}`, 'warn');
         await sleep(wait); attempt++; continue;
       }
-      throw new Error('HTTP ' + r.status);
+      throw new Error('HTTP ' + r.status + refusalNote(r.status, url));
     } catch (e) {
       lastErr = e;
       if (opts.signal?.aborted) throw e;
@@ -1103,6 +1282,7 @@ function updateSlotUI(idx) {
   if (s.serverName) chips += `<span class="chip">${s.serverName}</span>`;
   if (s.via) chips += `<span class="chip">${s.via}</span>`;
   if (s.quality) chips += `<span class="chip pink">${s.quality}</span>`;
+  if (s.conc && ADAPTIVE && s.conc !== SEG_CONCURRENCY) chips += `<span class="chip" title="auto-tuned segment concurrency">x${s.conc}</span>`;
   $('bg' + idx).innerHTML = chips;
   const pct = s.segTotal ? (s.segDone / s.segTotal * 100) : (s.totalSize ? s.downloaded / s.totalSize * 100 : 0);
   $('p' + idx).style.width = Math.min(pct, 100) + '%';
@@ -1128,9 +1308,11 @@ function renderQ() {
 function renderDone() {
   const el = $('dEl');
   if (!Done.length) { el.innerHTML = '<div class="empty" style="padding:18px">No completed files</div>'; return; }
-  el.innerHTML = Done.map((d, i) =>
-    `<div class="list-item"><span>✓ ${d.title} <span style="color:var(--muted)">${fmtBytes(d.size)}</span></span>${d.blob ? `<button class="btn-tiny" type="button" onclick="redownload(${i})">Save</button>` : ''}</div>`
-  ).join('');
+  el.innerHTML = Done.map((d, i) => {
+    const hash = d.hash ? ` <span style="color:var(--faint)" title="sha256 ${d.hash}">#${d.hash.slice(0, 8)}</span>` : '';
+    const saved = d.blob ? `<button class="btn-tiny" type="button" onclick="redownload(${i})">Save</button>` : '';
+    return `<div class="list-item"><span>✓ ${d.title} <span style="color:var(--muted)">${fmtBytes(d.size)}</span>${hash}</span>${saved}</div>`;
+  }).join('');
 }
 
 function redownload(i) {
@@ -1144,8 +1326,10 @@ function toMp4Filename(filename) {
 }
 
 function triggerBrowserDownload(blob, filename) {
-  const name = toMp4Filename(filename);
-  const file = new File([blob], name, { type: 'video/mp4', lastModified: Date.now() });
+  // Callers pass the final name (the mux step already converts .ts → .mp4 for HLS),
+  // so a direct TS/Matroska download keeps its real extension.
+  const name = filename;
+  const file = new File([blob], name, { type: blob.type || 'video/mp4', lastModified: Date.now() });
   const url = URL.createObjectURL(file);
   const a = document.createElement('a');
   a.href = url; a.download = name;
@@ -1153,14 +1337,14 @@ function triggerBrowserDownload(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 180000);
 }
 
-let toMp4Loader = null;
 async function loadToMp4() {
   if (window.toMp4) return window.toMp4;
-  if (!toMp4Loader) {
-    toMp4Loader = import('https://cdn.jsdelivr.net/npm/@invintusmedia/tomp4@1.7.4/src/index.min.js')
-      .then(mod => { window.toMp4 = mod.default || mod.toMp4; return window.toMp4; });
-  }
-  return toMp4Loader;
+  // Vendored locally (MIT, @invintusmedia/tomp4 1.7.4) — see vendor/LICENSE-tomp4.
+  // Loaded by the <script src="./vendor/tomp4.min.js"> tag above, so nothing is
+  // fetched from a third party and the page still works from file://.
+  const g = window.tomp4Vendor;
+  if (g) { window.toMp4 = g.default || g.toMp4 || g; return window.toMp4; }
+  throw new Error('MP4 muxer not loaded — keep the vendor/ folder next to this HTML file');
 }
 
 async function transmuxTsToMp4(tsSegments) {
@@ -1169,13 +1353,30 @@ async function transmuxTsToMp4(tsSegments) {
   const valid = tsSegments.filter(b => b?.byteLength);
   if (!valid.length) throw new Error('No video data');
   const mp4 = converter.stitchTs(valid);
-  const data = mp4.data || mp4;
-  if (data?.[4] !== 0x66 || data?.[5] !== 0x74 || data?.[6] !== 0x79 || data?.[7] !== 0x70) {
-    throw new Error('Invalid MP4 output');
+  const raw = mp4?.data || mp4;
+  if (!raw || (!(raw instanceof Uint8Array) && !(raw instanceof ArrayBuffer))) throw new Error('Muxer returned no buffer');
+  const bytes = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
+  if (bytes.length < 1024) throw new Error('Empty MP4');
+  // Container sanity: MP4 must start with an ftyp box and carry a moov (index) box.
+  if (bytes[4] !== 0x66 || bytes[5] !== 0x74 || bytes[6] !== 0x79 || bytes[7] !== 0x70) {
+    throw new Error('Invalid MP4 output (missing ftyp box)');
   }
-  const blob = new Blob([data], { type: 'video/mp4' });
+  if (!containsAscii(bytes, 'moov')) throw new Error('Invalid MP4 output (missing moov box)');
+  const hash = await sha256Hex(bytes);
+  const blob = new Blob([bytes], { type: 'video/mp4' });
   if (!blob.size) throw new Error('Empty MP4');
-  return blob;
+  return { blob, bytes, hash };
+}
+
+/** Cheap byte scan used for container checks. */
+function containsAscii(bytes, needle) {
+  const pat = [...needle].map(c => c.charCodeAt(0));
+  const limit = Math.min(bytes.length, 64 * 1024 * 1024); // moov is never past this in practice
+  outer: for (let i = 0; i < limit - pat.length; i++) {
+    for (let j = 0; j < pat.length; j++) if (bytes[i + j] !== pat[j]) continue outer;
+    return true;
+  }
+  return false;
 }
 
 function enqueue(item) { Q.push(item); renderQ(); }
@@ -1568,6 +1769,7 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
       if (!lines[j].startsWith('#EXT-X-STREAM-INF')) continue;
       const next = lines[j + 1];
       if (!next || next.startsWith('#')) continue;
+      if (isNonMediaEntry(next, lines[j])) continue;
       const rm = lines[j].match(/RESOLUTION=\d+x(\d+)/);
       const bm = lines[j].match(/BANDWIDTH=(\d+)/);
       const r = rm ? +rm[1] : 0;
@@ -1583,9 +1785,12 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
   }
 
   const segs = [];
-  let mirrored = 0;
+  let mirrored = 0, skipped = 0, prevTag = '';
   for (const l of lines) {
-    if (!l || l.startsWith('#')) continue;
+    if (!l) continue;
+    if (l.startsWith('#')) { prevTag = l; continue; }
+    if (isNonMediaEntry(l, prevTag)) { skipped++; prevTag = ''; continue; }
+    prevTag = '';
     let seg = unwrapProxyUrl(resolveAgainstBase(l, cdnBase));
     try {
       const su = new URL(seg);
@@ -1599,6 +1804,9 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
     segs.push(seg);
   }
   if (!segs.length) throw new Error('No segments');
+  if (skipped) {
+    log(`Slot ${idx + 1}: skipped ${skipped} non-media playlist entr${skipped === 1 ? 'y' : 'ies'} (ads/thumbnails/subtitles)`, 'dl');
+  }
   if (mirrored) {
     log(`Slot ${idx + 1}: ${mirrored} segments → ${stickyPath?.host || CDN_MIRROR_HOSTS[0]}`, 'ok');
     Slots[idx].via = 'mirror';
@@ -1607,15 +1815,46 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
   // Prefetch muxer while segments download
   const muxReady = loadToMp4().catch(() => null);
 
-  log(`Slot ${idx + 1}: ${segs.length} segments · x${SEG_CONCURRENCY}`, 'dl');
   Slots[idx].segTotal = segs.length;
   Slots[idx].segDone = 0;
   updateSlotUI(idx);
 
+  const conc = makeConcurrency(SEG_CONCURRENCY);
   const segData = new Array(segs.length);
-  let nxt = 0, done = 0;
   const failedIdx = [];
-  let uiClock = 0;
+  let done = 0;
+
+  // Pre-flight: pull segment 0 through the normal candidate ladder before opening
+  // the whole pool. A dead CDN host fails here in seconds (and is put in cooldown)
+  // instead of stalling the run — that failure mode cost ~47s before.
+  Slots[idx].status = 'Pre-flight…'; updateSlotUI(idx);
+  let firstSeg = null;
+  const probe = new AbortController();
+  const abortProbe = () => probe.abort();
+  signal?.addEventListener?.('abort', abortProbe, { once: true });
+  try {
+    firstSeg = await Promise.race([
+      smartFetch(idx, segs[0], referer, { isSegment: true, bytesOnly: true, signal: probe.signal })
+        .catch((e) => { if (signal.aborted) throw e; return null; }),
+      sleep(10000).then(() => { probe.abort(); return null; })
+    ]);
+  } catch (e) {
+    if (e.name === 'AbortError') throw e;
+  } finally {
+    signal?.removeEventListener?.('abort', abortProbe);
+  }
+  if (firstSeg?.byteLength) {
+    segData[0] = firstSeg; done = 1;
+    Slots[idx].downloaded += firstSeg.byteLength;
+    Slots[idx].segDone = 1;
+  } else {
+    conc.lower(); // slow/dead first hop — start conservative and ramp back up
+  }
+
+  log(`Slot ${idx + 1}: ${segs.length} segments · x${conc.limit}${ADAPTIVE ? ' auto-tune' : ''}`, 'dl');
+
+  let nxt = firstSeg?.byteLength ? 1 : 0;
+  let uiClock = 0, lastLimitLog = 0;
 
   const fetchSeg = async (si) => {
     const target = segs[si];
@@ -1624,15 +1863,15 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
     while (attempts <= maxTries) {
       try {
         if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-        const r = await smartFetch(idx, target, referer, { isSegment: true, signal });
-        const b = await r.arrayBuffer();
-        if (!b.byteLength || !isValidMediaBytes(b)) throw new Error('bad segment');
-        segData[si] = new Uint8Array(b);
-        Slots[idx].downloaded += b.byteLength;
+        const bytes = await smartFetch(idx, target, referer, { isSegment: true, bytesOnly: true, signal });
+        segData[si] = bytes;
+        Slots[idx].downloaded += bytes.byteLength;
+        conc.ok();
         break;
       } catch (e) {
         if (e.name === 'AbortError') throw e;
         attempts++;
+        conc.fail(e.message);
         if (attempts > maxTries) {
           segData[si] = new Uint8Array(0);
           failedIdx.push(si);
@@ -1649,14 +1888,20 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
     if (now - uiClock > 120 || done === segs.length) {
       uiClock = now;
       Slots[idx].status = `${done}/${segs.length}` + (failedIdx.length ? ` · ${failedIdx.length} missing` : '');
+      Slots[idx].conc = conc.limit;
       updateSlotUI(idx); updateStats();
+    }
+    if (ADAPTIVE && now - lastLimitLog > 6000 && conc.limit !== Slots[idx]._lastConc) {
+      Slots[idx]._lastConc = conc.limit;
+      lastLimitLog = now;
+      if (conc.limit !== SEG_CONCURRENCY) log(`Slot ${idx + 1}: speed tuning → x${conc.limit}`, 'api');
     }
   };
 
   await new Promise((res, rej) => {
     let act = 0;
     const pump = () => {
-      while (act < SEG_CONCURRENCY && nxt < segs.length) {
+      while (act < conc.limit && nxt < segs.length) {
         if (signal.aborted) { rej(new DOMException('Aborted', 'AbortError')); return; }
         const si = nxt++; act++;
         fetchSeg(si).then(() => {
@@ -1667,6 +1912,9 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
       }
     };
     pump();
+    // Single-segment playlists (or a pre-flight that already finished the last
+    // segment) have no pool work left, so resolve instead of waiting forever.
+    if (done >= segs.length) res();
   });
 
   // Second pass: retry failed segments one-by-one at lower concurrency
@@ -1676,7 +1924,7 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
     updateSlotUI(idx);
     const still = [];
     // serial-ish small pool so we don't hammer a dying CDN
-    const retryConc = Math.min(4, SEG_CONCURRENCY);
+    const retryConc = Math.max(2, Math.min(4, conc.limit));
     let ri = 0;
     await new Promise((res, rej) => {
       let act = 0, finished = 0;
@@ -1688,12 +1936,10 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
             let ok = false;
             for (let t = 0; t < 4 && !ok; t++) {
               try {
-                const r = await smartFetch(idx, segs[si], referer, { isSegment: true, signal });
-                const b = await r.arrayBuffer();
-                if (b.byteLength && isValidMediaBytes(b)) {
-                  // undo previous 0-byte accounting if any
-                  segData[si] = new Uint8Array(b);
-                  Slots[idx].downloaded += b.byteLength;
+                const bytes = await smartFetch(idx, segs[si], referer, { isSegment: true, bytesOnly: true, signal });
+                if (bytes?.byteLength) {
+                  segData[si] = bytes;
+                  Slots[idx].downloaded += bytes.byteLength;
                   ok = true;
                 }
               } catch (e) {
@@ -1731,26 +1977,71 @@ async function downloadHLS(idx, m3u8Url, referer, filename, signal) {
   await muxReady;
   const total = segData.reduce((a, c) => a + (c?.byteLength || 0), 0);
   const outName = toMp4Filename(filename);
-  const blob = await transmuxTsToMp4(segData);
+  const { blob, hash } = await transmuxTsToMp4(segData);
+  segData.fill(null); // drop the TS copies now that the MP4 exists — keeps peak memory down
   const trackTag = (Slots[idx].audioType || '').toUpperCase();
-  log(`Slot ${idx + 1}: OK ${fmtBytes(total)} → ${fmtBytes(blob.size)} MP4 · ${trackTag || 'track?'}`, 'ok');
+
+  // Integrity report: a clean TS→MP4 remux shrinks slightly (188-byte packet
+  // padding is dropped) but copies the A/V bitstreams untouched. A big drop
+  // would mean something got lost, so say so instead of staying quiet.
+  const ratio = total ? blob.size / total : 1;
+  log(`Slot ${idx + 1}: OK ${fmtBytes(total)} → ${fmtBytes(blob.size)} MP4 · ${trackTag || 'track?'} · remux ${(ratio * 100).toFixed(1)}% · no re-encode`, 'ok');
+  if (ratio > 0 && ratio < 0.7) log(`Slot ${idx + 1}: output smaller than expected — verify before watching`, 'warn');
+  if (hash) log(`Slot ${idx + 1}: sha256 ${hash}`, 'api');
+
   toast(`Downloaded ${outName}`);
   if (AUTO_SAVE) triggerBrowserDownload(blob, outName);
-  Done.unshift({
+  const entry = {
     title: (Slots[idx].title || 'Video') + ' ' + (Slots[idx].subtitle || '') + (trackTag ? ` [${trackTag}]` : ''),
-    filename: outName, size: blob.size, blob
-  });
+    filename: outName, size: blob.size, blob, hash, saved: AUTO_SAVE
+  };
+  Done.unshift(entry);
+  // Keep memory bounded on long runs: files already written to disk by auto-save
+  // don't need a second in-page copy hanging around.
+  for (let i = MAX_KEPT_BLOBS; i < Done.length; i++) {
+    if (Done[i].saved && Done[i].blob) Done[i].blob = null;
+  }
   DoneCount++; TotalBytes += blob.size;
   renderDone(); updateStats();
 }
 
 async function downloadDirect(idx, url, title, signal) {
+  url = assertSafeUrl(url); // http(s) only, no file:/data:/LAN targets
   Slots[idx].status = 'Connecting…'; updateSlotUI(idx);
-  const resp = await fetchWithRetry(url, { signal }, MAX_RETRIES, `Slot ${idx + 1}`);
+  const referer = (() => { try { return new URL(url).origin + '/'; } catch (_) { return ''; } })();
+  const resp = await fetchWithRetry(url, { signal, credentials: 'omit', referrerPolicy: 'no-referrer' }, MAX_RETRIES, `Slot ${idx + 1}`);
   Slots[idx].totalSize = parseInt(resp.headers.get('content-length') || '0');
   Slots[idx].status = 'Downloading…'; updateSlotUI(idx);
+
   const reader = resp.body.getReader();
   const chunks = [];
+  const headParts = [];
+  let headLen = 0, sniffed = false, chosenExt = '.mp4';
+
+  /** Identify what we are actually receiving before saving anything. */
+  const classify = (bytes) => {
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes.slice(0, 512));
+    if (text.trimStart().startsWith('#EXTM3U')) return { playlist: true };
+    const kind = sniffContainer(bytes);
+    if (!kind) {
+      reader.cancel().catch(() => {});
+      throw new Error(`Refused: the server sent ${describeNonMedia(bytes)}, not a video file — nothing was saved`);
+    }
+    chosenExt = kind.ext;
+    log(`Slot ${idx + 1}: detected ${kind.kind} container`, 'api');
+    return { playlist: false };
+  };
+
+  /** Returns true when the payload turned out to be a playlist and was handled. */
+  const handlePlaylist = async (verdict) => {
+    if (!verdict.playlist) return false;
+    await reader.cancel().catch(() => {});
+    log(`Slot ${idx + 1}: playlist detected, switching to segment download`, 'dl');
+    Slots[idx].downloaded = 0; Slots[idx].totalSize = 0;
+    await downloadHLS(idx, url, referer, sanitizeFilename(title) + '.ts', signal);
+    return true;
+  };
+
   while (true) {
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     const { done, value } = await reader.read();
@@ -1762,15 +2053,73 @@ async function downloadDirect(idx, url, title, signal) {
       Slots[idx]._lu = Date.now();
       updateSlotUI(idx); updateStats();
     }
+
+    if (!sniffed) {
+      headParts.push(value);
+      headLen += value.byteLength;
+      if (headLen >= 512 || value.byteLength >= 188) {
+        sniffed = true;
+        // A playlist is not a file — hand it to the proper segment downloader.
+        if (await handlePlaylist(classify(concatBytes(headParts, headLen)))) return;
+      }
+    }
   }
-  const blob = new Blob(chunks, { type: 'video/mp4' });
-  const fn = sanitizeFilename(title) + '.mp4';
-  log(`Slot ${idx + 1}: ${fmtBytes(Slots[idx].downloaded)}`, 'ok');
+
+  // Short responses (< 512 bytes) were never classified inside the loop: do it now,
+  // so a tiny playlist is still routed to the segment downloader instead of saved.
+  if (!sniffed && await handlePlaylist(classify(concatBytes(headParts, headLen)))) return;
+  const total = chunks.reduce((a, c) => a + c.byteLength, 0);
+  if (!total) throw new Error('Empty response — nothing saved');
+  const blob = new Blob(chunks, { type: chosenExt === '.mp4' ? 'video/mp4' : 'application/octet-stream' });
+  const fn = sanitizeFilename(title) + chosenExt;
+  const hash = await sha256Hex(new Uint8Array(await blob.arrayBuffer()));
+  log(`Slot ${idx + 1}: ${fmtBytes(total)} · ${chosenExt.slice(1)} · untouched (no re-encode)`, 'ok');
+  if (hash) log(`Slot ${idx + 1}: sha256 ${hash}`, 'api');
   toast('Downloaded ' + fn);
   if (AUTO_SAVE) triggerBrowserDownload(blob, fn);
-  Done.unshift({ title, filename: fn, size: Slots[idx].downloaded, blob });
-  DoneCount++; TotalBytes += Slots[idx].downloaded;
+  Done.unshift({ title, filename: fn, size: total, blob, hash, saved: AUTO_SAVE });
+  for (let i = MAX_KEPT_BLOBS; i < Done.length; i++) {
+    if (Done[i].saved && Done[i].blob) Done[i].blob = null;
+  }
+  DoneCount++; TotalBytes += total;
   renderDone(); updateStats();
+}
+
+/** Join chunked reads (used only for the small leading sniff buffer). */
+function concatBytes(parts, totalLen) {
+  const out = new Uint8Array(totalLen || parts.reduce((a, p) => a + p.byteLength, 0));
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.byteLength; }
+  return out;
+}
+
+/** Identify a media container from its leading bytes. Returns null for anything else. */
+function sniffContainer(bytes) {
+  if (!bytes || bytes.length < 16) return null;
+  const str = (i, n) => { let s = ''; for (let k = 0; k < n && i + k < bytes.length; k++) s += String.fromCharCode(bytes[i + k]); return s; };
+  const box = str(4, 4);
+  if (box === 'ftyp' || box === 'styp' || box === 'moov' || box === 'mdat') return { kind: 'MP4', ext: '.mp4' };
+  if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) return { kind: 'Matroska/WebM', ext: '.mkv' };
+  if (bytes[0] === 0x47 && (bytes.length < 189 || bytes[188] === 0x47)) return { kind: 'MPEG-TS', ext: '.ts' };
+  if (str(0, 4) === 'OggS') return { kind: 'Ogg', ext: '.ogg' };
+  if (str(0, 4) === 'RIFF' && str(8, 4) === 'AVI ') return { kind: 'AVI', ext: '.avi' };
+  if (str(0, 3) === 'FLV') return { kind: 'FLV', ext: '.flv' };
+  if (str(0, 3) === 'ID3' || (bytes[0] === 0xff && (bytes[1] & 0xe0) === 0xe0)) return { kind: 'MP3', ext: '.mp3' };
+  return null;
+}
+
+/** Friendly name for a payload that is definitely not media. */
+function describeNonMedia(bytes) {
+  const str = (i, n) => { let s = ''; for (let k = 0; k < n && i + k < bytes.length; k++) s += String.fromCharCode(bytes[i + k]); return s; };
+  const head = str(0, 64);
+  if (str(0, 2) === 'MZ') return 'a Windows executable';
+  if (str(0, 4) === '\x7fELF') return 'a Linux executable';
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) return 'a ZIP/Office archive';
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) return 'a gzip archive';
+  if (str(0, 4) === '%PDF') return 'a PDF document';
+  if (/^<(\?xml|!doctype html|html)/i.test(head.trimStart())) return 'an HTML/XML page';
+  if (/^[{[]/.test(head.trimStart())) return 'a JSON response';
+  return 'an unrecognised format';
 }
 
 async function testApi() {
@@ -1795,8 +2144,9 @@ async function testApi() {
 }
 
 loadCfg();
-log('StreamVault ready', 'ok');
-log(`API ${API || 'same-origin'} · concurrency ${SEG_CONCURRENCY} · max quality kept`, 'api');
+log('StreamVault v6.7 ready', 'ok');
+log(`API ${API || 'same-origin'} · concurrency ${SEG_CONCURRENCY}${ADAPTIVE ? ' (auto-tune)' : ''} · max quality kept`, 'api');
+log('No analytics · no third-party scripts · muxer runs locally · files stay on your device', 'api');
 if (location.protocol === 'file:') {
   log('Running from file:// — set API URL in Settings', 'warn');
   $('setupBanner').classList.remove('hidden');

@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:streamvault": "node scripts/check-streamvault.mjs",
+    "check:proxy": "node scripts/check-proxy.mjs",
+    "check": "npm run check:streamvault && npm run check:proxy"
   },
   "dependencies": {
     "axios": "^1.16.1",

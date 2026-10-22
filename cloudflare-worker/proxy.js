@@ -1,3 +1,5 @@
+// ── Cloudflare Worker High-Volume Production Proxy ──────────────────────────
+
 const BROWSER_FINGERPRINTS = [
   {
     'User-Agent':
@@ -40,6 +42,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, OPTIONS',
   'Access-Control-Allow-Headers': '*',
   'Access-Control-Max-Age': '86400',
+  'X-Content-Type-Options': 'nosniff',
 };
 
 const HOP_BY_HOP_HEADERS = new Set([
@@ -57,194 +60,209 @@ const HOP_BY_HOP_HEADERS = new Set([
   'x-real-ip',
 ]);
 
-/**
- * Validates whether an IP address is private, loopback, or internal cloud metadata.
- */
-function isPrivateIp(ip) {
-  const cleanIp = ip.replace(/^\[|\]$/g, '').toLowerCase();
+/** Constant-time string equality check to prevent timing side-channels */
+function timingSafeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const enc = new TextEncoder();
+  const aBuf = enc.encode(a);
+  const bBuf = enc.encode(b);
+  if (aBuf.byteLength !== bBuf.byteLength) return false;
+  let c = 0;
+  for (let i = 0; i < aBuf.byteLength; i++) {
+    c |= aBuf[i] ^ bBuf[i];
+  }
+  return c === 0;
+}
 
-  // IPv4 checks
-  const ipv4Match = cleanIp.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    if (a === 127) return true; // 127.0.0.0/8 loopback
-    if (a === 10) return true;  // 10.0.0.0/8 private
-    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 private
-    if (a === 192 && b === 168) return true; // 192.168.0.0/16 private
-    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local & cloud metadata
-    if (a === 0) return true; // 0.0.0.0/8 current network
-    if (a === 100 && (b >= 64 && b <= 127)) return true; // Carrier NAT & Alibaba metadata
+function isPrivateIp(ip) {
+  // IPv4 dot-decimal
+  const v4Parts = ip.split('.').map((p) => parseInt(p, 10));
+  if (v4Parts.length === 4 && v4Parts.every((p) => !isNaN(p) && p >= 0 && p <= 255)) {
+    const [a, b, c] = v4Parts;
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    if (a === 169 && b === 254) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 198 && (b === 18 || b === 19 || b === 51)) return true;
+    if (a === 203 && b === 0 && c === 113) return true;
+    if (a >= 224) return true; // Multicast & Reserved
     return false;
   }
 
-  // IPv6 checks
-  if (
-    cleanIp === '::1' ||
-    cleanIp === '::' ||
-    cleanIp.startsWith('fc') ||
-    cleanIp.startsWith('fd') ||
-    cleanIp.startsWith('fe80') ||
-    cleanIp.startsWith('::ffff:')
-  ) {
-    return true;
-  }
-
+  // IPv6
+  const norm = ip.toLowerCase();
+  if (norm === '::1' || norm === '::' || norm === '0:0:0:0:0:0:0:1' || norm === '0:0:0:0:0:0:0:0') return true;
+  if (norm.startsWith('::ffff:')) return isPrivateIp(norm.replace('::ffff:', ''));
+  if (/^f[cd][0-9a-f]{2}:/i.test(norm)) return true; // Unique local fc00::/7
+  if (/^fe[89ab][0-9a-f]:/i.test(norm)) return true; // Link-local fe80::/10
+  if (/^ff[0-9a-f]{2}:/i.test(norm)) return true; // Multicast
   return false;
 }
 
-/**
- * Checks if a target URL is private or points to an internal network address.
- */
 function isPrivateUrl(targetUrl) {
   try {
     const parsed = new URL(targetUrl);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return true;
+    if (parsed.port && parsed.port !== '80' && parsed.port !== '443') return true;
     if (parsed.username || parsed.password) return true;
 
-    const host = parsed.hostname.toLowerCase();
+    let host = parsed.hostname.toLowerCase();
+    if (host.startsWith('[') && host.endsWith(']')) {
+      host = host.slice(1, -1);
+    }
+
     if (
       host === 'localhost' ||
       host.endsWith('.local') ||
       host.endsWith('.internal') ||
-      host.endsWith('.lan')
+      host.endsWith('.lan') ||
+      host.endsWith('.home') ||
+      host.endsWith('.corp') ||
+      host.endsWith('.test')
     ) {
       return true;
     }
 
-    if (host === 'metadata.google.internal' || host.includes('169.254.169.254')) {
+    if (
+      host === 'metadata.google.internal' ||
+      host === 'metadata' ||
+      host === '169.254.169.254' ||
+      host === '100.100.100.200'
+    ) {
       return true;
     }
 
-    if (isPrivateIp(host)) return true;
+    // Single integer IP representation (e.g. 2130706433)
+    if (/^\d+$/.test(host)) {
+      const num = parseInt(host, 10);
+      if (!isNaN(num) && num >= 0 && num <= 4294967295) {
+        const a = (num >>> 24) & 255;
+        const b = (num >>> 16) & 255;
+        const c = (num >>> 8) & 255;
+        const d = num & 255;
+        return isPrivateIp(`${a}.${b}.${c}.${d}`);
+      }
+      return true;
+    }
 
-    return false;
+    // Check hex or octal segments
+    if (host.includes('.') && host.split('.').every((seg) => /^(0x[0-9a-f]+|0[0-7]+|\d+)$/i.test(seg))) {
+      const parts = host.split('.').map((seg) => {
+        if (seg.startsWith('0x') || seg.startsWith('0X')) return parseInt(seg, 16);
+        if (seg.length > 1 && seg.startsWith('0')) return parseInt(seg, 8);
+        return parseInt(seg, 10);
+      });
+      if (parts.length === 4 && parts.every((p) => !isNaN(p) && p >= 0 && p <= 255)) {
+        return isPrivateIp(parts.join('.'));
+      }
+      return true;
+    }
+
+    return isPrivateIp(host);
   } catch (_) {
     return true;
   }
 }
 
-// Trusted streaming player/embed origins
-const TRUSTED_REFERER_ROOTS = [
-  'megaplay.buzz',
-  'vidstream.buzz',
-  'megacloud.blog',
-  'akirax.buzz',
-  'vidwish.live',
-  'streamwish.to',
-  'filelions.to',
-  'doodstream.com',
-  'streamtape.com',
-  'mp4upload.com',
-  'anipixcdn.co',
-  'chiaki.site',
-  'anikoto.net',
-  'anikototv.to',
-];
+// ── Dynamic & Secure Streaming Media Validator ────────────────────────────
+const BLOCKED_FILE_EXTENSIONS = new Set([
+  '.exe', '.dll', '.so', '.dylib', '.sh', '.bat', '.cmd', '.ps1', '.bash',
+  '.apk', '.ipa', '.jar', '.msi', '.bin', '.app',
+  '.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.iso',
+  '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+  '.php', '.asp', '.aspx', '.jsp', '.cgi', '.py', '.rb', '.pl',
+  '.env', '.git', '.htaccess', '.conf', '.ini', '.sql', '.yaml', '.yml'
+]);
 
-// Fast-path allowed CDN domains
-const DEFAULT_ALLOWED_STREAM_PATTERNS = [
-  'cdn.imgnex.top',
-  '*.imgnex.top',
-  'fetch.nexabloom.top',
-  '*.nexabloom.top',
-  '*.snapcdn.top',
-  '*.akamaized.net',
-  '*.tiktokcdn.com',
-  '*.byteoversea.com',
-  '*.ibytedtos.com',
-  '*.ibyteimg.com',
-  '*.tiktokv.com',
-  '*.rapid-cloud.ru',
-  '*.bunnycdn.ru',
-  '*.xoticsky.top',
-  '*.owocdn.top',
-  '*.shiora.site',
-  '*.shiora.top',
-  '*.lostproject.club',
-  '*.vidtube.site',
-  '*.anipixcdn.co',
-  '*.chiaki.site',
-];
-
-function getEtld1(hostname) {
-  const parts = hostname.split('.');
-  return parts.length >= 2 ? parts.slice(-2).join('.') : hostname;
-}
-
-function isAllowedStreamDomain(targetUrl, env, referer) {
+/**
+ * Validates whether an outgoing target URL is safe and legitimate for streaming proxy.
+ * Eliminates manual domain whitelisting while ensuring multi-layered security:
+ * 1. Protocol & Port restriction (HTTP/HTTPS, 80/443 only)
+ * 2. Strict blacklist on hazardous extensions & path traversal
+ * 3. Dynamic media pattern & streaming signature verification
+ * 4. Caller client validation (reject direct browser navigation document/iframe)
+ */
+function isAllowedStreamTarget(targetUrl, request, env) {
   try {
     const parsed = new URL(targetUrl);
     const host = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname.toLowerCase();
     const search = parsed.search.toLowerCase();
-    const envAllowed = env && (env.ALLOWED_STREAM_DOMAINS || env.ALLOWED_PROXY_HOSTS)
-      ? (env.ALLOWED_STREAM_DOMAINS || env.ALLOWED_PROXY_HOSTS).split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-      : [];
 
-    if (envAllowed.includes('*')) return true;
+    // 1. Protocols & Ports
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    if (parsed.port && parsed.port !== '80' && parsed.port !== '443') return false;
+    if (parsed.username || parsed.password) return false;
+    if (!host.includes('.')) return false; // Hostname must be FQDN, not single label intranet
 
-    // 1. Fast-path domain whitelist
-    const allPatterns = [...DEFAULT_ALLOWED_STREAM_PATTERNS, ...envAllowed];
-    for (const pattern of allPatterns) {
-      if (pattern.startsWith('*.')) {
-        const root = pattern.slice(2);
-        if (host === root || host.endsWith('.' + root)) return true;
-      } else if (host === pattern) {
+    // 2. Reject Path Traversal
+    if (pathname.includes('../') || pathname.includes('..\\') || pathname.includes('%2e%2e')) {
+      return false;
+    }
+
+    // 3. Block Dangerous File Extensions
+    for (const ext of BLOCKED_FILE_EXTENSIONS) {
+      if (pathname.endsWith(ext) || pathname.includes(ext + '?')) {
+        return false;
+      }
+    }
+
+    // 4. Reject Direct Browser Top-Level Navigation
+    if (request) {
+      const secFetchDest = request.headers.get('Sec-Fetch-Dest');
+      if (secFetchDest === 'document' || secFetchDest === 'iframe') {
+        return false;
+      }
+    }
+
+    // 5. Explicit whitelist override from environment (if configured)
+    const allowedEnv = env && env.ALLOWED_PROXY_HOSTS ? env.ALLOWED_PROXY_HOSTS.trim() : '';
+    if (allowedEnv === '*') return true;
+    if (allowedEnv) {
+      const explicitHosts = allowedEnv.split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+      if (explicitHosts.some((domain) => host === domain || host.endsWith('.' + domain))) {
         return true;
       }
     }
 
-    // 2. Block hazardous file extensions
-    const blockedExts = ['.exe', '.dll', '.sh', '.bat', '.cmd', '.apk', '.zip', '.rar', '.7z', '.tar', '.gz', '.pdf', '.doc', '.docx', '.iso'];
-    if (blockedExts.some((ext) => pathname.endsWith(ext))) {
-      return false;
-    }
+    // 6. Dynamic Streaming Media Identification
+    // Manifests (m3u8, mpd), video segments (ts, m4s, mp4, aac, m4a, webm), subtitles (vtt, srt, ass), DRM keys (key)
+    const isMediaExtension = /\.(m3u8|mpd|ts|m4s|mp4|aac|m4a|webm|vtt|srt|ass|key)($|\?)/i.test(pathname + search);
 
-    // 3. Media pattern matching
-    const isMediaFile =
-      /\.(m3u8|ts|m4s|mp4|aac|m4a|vtt|srt|ass|key)($|\?)/i.test(pathname + search) ||
+    // Segment naming conventions used by HLS / DASH / Video CDNs
+    const isSegmentPattern =
       /\/seg-[a-z0-9_.-]+/i.test(pathname) ||
-      /(\/anime\/|\/hls\/|\/stream\/).*\.(jpg|jpeg|png|image|webp|html|htm|txt|bin)($|\?)/i.test(pathname + search) ||
-      pathname.includes('~tplv-');
+      /\/segment-[a-z0-9_.-]+/i.test(pathname) ||
+      /\/frag-[a-z0-9_.-]+/i.test(pathname) ||
+      /\/index[a-z0-9_.-]*\.(m3u8|ts)/i.test(pathname) ||
+      /\/master[a-z0-9_.-]*\.m3u8/i.test(pathname) ||
+      /\/playlist[a-z0-9_.-]*\.m3u8/i.test(pathname) ||
+      /\/subtitles?\//i.test(pathname) ||
+      /\/tracks?\//i.test(pathname) ||
+      pathname.includes('~tplv-'); // TikTok/ByteDance CDN video chunks
 
-    if (!isMediaFile) return false;
-
-    // 4. Streaming context validation
-    let refererTrusted = false;
-    if (referer) {
-      try {
-        const refHost = new URL(referer).hostname.toLowerCase();
-        const refRoot = getEtld1(refHost);
-        refererTrusted = TRUSTED_REFERER_ROOTS.some(
-          (root) => refRoot === root || refHost.endsWith('.' + root)
-        ) ||
-        referer.includes('/watch') ||
-        referer.includes('/stream') ||
-        referer.includes('anikoto') ||
-        referer.includes('aonime');
-      } catch (_) {
-        refererTrusted = false;
-      }
-    }
-
-    const hasStreamingContext = refererTrusted ||
-      pathname.includes('/anime/') ||
-      pathname.includes('/hls/') ||
-      pathname.includes('/stream/') ||
-      /\/seg-[a-z0-9_.-]+/i.test(pathname) ||
-      pathname.includes('~tplv-') ||
+    // Streaming signatures & CDN tokens
+    const hasStreamingSignature =
+      /(\/anime\/|\/hls\/|\/stream\/|\/video\/|\/videojs\/)/i.test(pathname) ||
       parsed.searchParams.has('x-expires') ||
+      parsed.searchParams.has('x-signature') ||
       parsed.searchParams.has('token') ||
-      parsed.searchParams.has('sig');
+      parsed.searchParams.has('sig') ||
+      parsed.searchParams.has('signature') ||
+      parsed.searchParams.has('auth_key') ||
+      parsed.searchParams.has('hash') ||
+      parsed.searchParams.has('lk3s');
 
-    return hasStreamingContext;
+    return isMediaExtension || isSegmentPattern || hasStreamingSignature;
   } catch (_) {
     return false;
   }
 }
 
 /**
- * Normalizes dead, stale, or rate-limited upstream CDN mirror hosts to the active high-capacity cdn.imgnex.top origin.
+ * Normalizes dead, stale, or rate-limited upstream CDN mirror hosts to active origins.
  */
 function remapMirrorUrl(urlStr) {
   try {
@@ -252,29 +270,26 @@ function remapMirrorUrl(urlStr) {
     const host = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname;
 
-    if ((host === 'fetch.nexabloom.top' || host === 'cdn.imgnex.top') && pathname.endsWith('master.m3u8')) {
-      parsed.host = 'ncdn.imgnex.top';
+    // 1. ncdn.imgnex.top is obsolete / returns 404. Normalize to active cdn.imgnex.top!
+    if (host === 'ncdn.imgnex.top') {
+      parsed.host = 'cdn.imgnex.top';
       return parsed.toString();
     }
 
+    // 2. bb.akirax.buzz and .snapcdn.top mirror mapping
     if (host === 'bb.akirax.buzz' && pathname.startsWith('/anime/')) {
       parsed.host = 'cdn.imgnex.top';
       return parsed.toString();
     }
-
-    if (host === 'ncdn.imgnex.top' && !pathname.endsWith('master.m3u8')) {
-      parsed.host = 'cdn.imgnex.top';
-      return parsed.toString();
-    }
-
     if (host.endsWith('.snapcdn.top') && pathname.startsWith('/anime/')) {
       parsed.host = 'cdn.imgnex.top';
       return parsed.toString();
     }
 
+    // 3. Stale buzz / click mirrors
     const isDeadBuzz = host.includes('zaplume.buzz') || host.includes('mewstream.buzz');
     if (isDeadBuzz || (host.endsWith('.click') && !host.includes('akirax.buzz'))) {
-      parsed.host = pathname.endsWith('master.m3u8') ? 'ncdn.imgnex.top' : 'cdn.imgnex.top';
+      parsed.host = 'cdn.imgnex.top';
       return parsed.toString();
     }
 
@@ -285,10 +300,6 @@ function remapMirrorUrl(urlStr) {
 }
 
 export default {
-  /**
-   * Cloudflare Worker dedicated exclusively to video streaming proxying.
-   * Proxies HLS manifests, media chunks, AES encryption keys, and subtitles.
-   */
   async fetch(request, env) {
     // ── Handle CORS Preflight ───────────────────────────────────────────────
     if (request.method === 'OPTIONS') {
@@ -298,7 +309,17 @@ export default {
     const { searchParams, origin } = new URL(request.url);
     const target = searchParams.get('url');
     const referer = searchParams.get('referer') || request.headers.get('Referer') || '';
-    const customProxy = searchParams.get('proxy') || request.headers.get('x-proxy-target');
+    const rawCustomProxy = searchParams.get('proxy') || request.headers.get('x-proxy-target');
+    const mode = searchParams.get('mode'); // 'scrape' = server-side HTML/JSON scraping mode
+    const isScrapeMode = mode === 'scrape';
+
+    // ── Secret Key Auth (For backend scraping mode) ─────────────────────────
+    if (isScrapeMode && env.WORKER_SECRET) {
+      const provided = request.headers.get('X-Worker-Secret') || '';
+      if (!timingSafeEqual(provided, env.WORKER_SECRET)) {
+        return Response.json({ error: 'Unauthorized' }, { status: 401, headers: CORS_HEADERS });
+      }
+    }
 
     if (!target) {
       return Response.json({ error: 'Missing url parameter' }, { status: 400, headers: CORS_HEADERS });
@@ -306,18 +327,18 @@ export default {
 
     // ── SSRF Guard ─────────────────────────────────────────────────────────
     if (isPrivateUrl(target)) {
-      return Response.json({ error: 'Access to private network addresses is restricted' }, { status: 403, headers: CORS_HEADERS });
+      return Response.json(
+        { error: 'Access to private network addresses is restricted' },
+        { status: 403, headers: CORS_HEADERS }
+      );
     }
 
-    // ── Enforce Streaming Domain Allowlist (Prevent Open Forward Proxy) ─────
-    if (!isAllowedStreamDomain(target, env, referer)) {
-      return Response.json({ error: 'Target host or media pattern is not permitted for streaming proxy' }, { status: 403, headers: CORS_HEADERS });
-    }
-
-    // ── Validate Custom Proxy against Pool (if configured) ─────────────────
-    const envProxies = env && env.PROXIES ? env.PROXIES.split(',').map(p => p.trim()).filter(Boolean) : [];
-    if (customProxy && envProxies.length > 0 && !envProxies.includes(customProxy)) {
-      return Response.json({ error: 'Specified proxy node is not authorized' }, { status: 403, headers: CORS_HEADERS });
+    // ── Dynamic Streaming Media Validator ──────────────────────────────────
+    if (!isScrapeMode && !isAllowedStreamTarget(target, request, env)) {
+      return Response.json(
+        { error: 'Target host or media pattern is not authorized for proxy streaming' },
+        { status: 403, headers: CORS_HEADERS }
+      );
     }
 
     // ── Target URL Normalization & Stale Mirror Remapping ──────────────────
@@ -336,9 +357,33 @@ export default {
     upstreamHeaders.set('Accept', '*/*');
     upstreamHeaders.set('Accept-Encoding', 'gzip, deflate, br');
     upstreamHeaders.set('Accept-Language', clientAcceptLanguage || fp['Accept-Language']);
-    upstreamHeaders.set('Sec-Fetch-Dest', 'empty');
-    upstreamHeaders.set('Sec-Fetch-Mode', 'cors');
-    upstreamHeaders.set('Sec-Fetch-Site', 'cross-site');
+
+    const isXhrRequest = request.headers.get('X-Requested-With') === 'XMLHttpRequest';
+    const incomingAccept = request.headers.get('Accept');
+
+    if (isScrapeMode && !isXhrRequest) {
+      upstreamHeaders.set('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+      upstreamHeaders.set('Sec-Fetch-Dest', 'document');
+      upstreamHeaders.set('Sec-Fetch-Mode', 'navigate');
+      upstreamHeaders.set('Sec-Fetch-Site', 'none');
+      upstreamHeaders.set('Sec-Fetch-User', '?1');
+      upstreamHeaders.set('Upgrade-Insecure-Requests', '1');
+      upstreamHeaders.set('Cache-Control', 'max-age=0');
+      upstreamHeaders.set('Priority', 'u=0, i');
+      if (env.SCRAPE_COOKIE) upstreamHeaders.set('Cookie', env.SCRAPE_COOKIE);
+    } else if (isScrapeMode && isXhrRequest) {
+      upstreamHeaders.set('Accept', incomingAccept || 'application/json, text/javascript, */*; q=0.01');
+      upstreamHeaders.set('X-Requested-With', 'XMLHttpRequest');
+      upstreamHeaders.set('Sec-Fetch-Dest', 'empty');
+      upstreamHeaders.set('Sec-Fetch-Mode', 'cors');
+      upstreamHeaders.set('Sec-Fetch-Site', 'same-origin');
+      try { upstreamHeaders.set('Referer', new URL(target).origin + '/'); } catch (_) {}
+      if (env.SCRAPE_COOKIE) upstreamHeaders.set('Cookie', env.SCRAPE_COOKIE);
+    } else {
+      upstreamHeaders.set('Sec-Fetch-Dest', 'empty');
+      upstreamHeaders.set('Sec-Fetch-Mode', 'cors');
+      upstreamHeaders.set('Sec-Fetch-Site', 'cross-site');
+    }
 
     if (fp['sec-ch-ua']) upstreamHeaders.set('sec-ch-ua', fp['sec-ch-ua']);
     if (fp['sec-ch-ua-mobile']) upstreamHeaders.set('sec-ch-ua-mobile', fp['sec-ch-ua-mobile']);
@@ -348,10 +393,9 @@ export default {
       upstreamHeaders.set('Referer', referer);
       try {
         upstreamHeaders.set('Origin', new URL(referer).origin);
-      } catch (_) { }
+      } catch (_) {}
     }
 
-    // Forward Range header for video seeking
     const rangeHeader = request.headers.get('Range');
     if (rangeHeader) {
       upstreamHeaders.set('Range', rangeHeader);
@@ -362,17 +406,21 @@ export default {
     let upstreamRes = null;
     let lastErr = null;
 
+    const envProxies = env && env.PROXIES ? env.PROXIES.split(',').map((p) => p.trim()).filter(Boolean) : [];
+    // Only accept customProxy if it is among authorized env.PROXIES
+    const safeCustomProxy = rawCustomProxy && envProxies.includes(rawCustomProxy) ? rawCustomProxy : null;
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        const isMediaChunk = !/\.m3u8/i.test(targetUrl) && !/\.(vtt|srt|ass)($|\?)/i.test(targetUrl);
+        const isMediaChunk = !/\.m3u8/i.test(targetUrl) && !/\.(vtt|srt|ass)($|\?)/i.test(targetUrl) && !isScrapeMode;
         const fetchOptions = {
           headers: upstreamHeaders,
           redirect: 'follow',
           ...(isMediaChunk ? { cf: { cacheEverything: true, cacheTtl: 86400 } } : {}),
         };
 
-        if (customProxy || envProxies.length > 0) {
-          const selectedProxy = customProxy || envProxies[Math.floor(Math.random() * envProxies.length)];
+        if (safeCustomProxy || envProxies.length > 0) {
+          const selectedProxy = safeCustomProxy || envProxies[Math.floor(Math.random() * envProxies.length)];
           if (selectedProxy) {
             upstreamHeaders.set('X-Forwarded-Proxy', selectedProxy);
           }
@@ -380,19 +428,19 @@ export default {
 
         upstreamRes = await fetch(targetUrl, fetchOptions);
 
-        // Fallback for 404, 429, or 403 on rate-limited/dead origins
-        if (upstreamRes.status === 404 || upstreamRes.status === 429 || upstreamRes.status === 403) {
+        if (upstreamRes.status === 404 || upstreamRes.status === 429 || upstreamRes.status === 403 || upstreamRes.status >= 500) {
           try {
             const parsed = new URL(targetUrl);
             if (parsed.pathname.startsWith('/anime/')) {
-              const fallbackHost = parsed.pathname.endsWith('master.m3u8') ? 'ncdn.imgnex.top' : 'cdn.imgnex.top';
-              if (parsed.host !== fallbackHost) {
+              for (const fallbackHost of ['cdn.imgnex.top', 'fetch.nexabloom.top']) {
+                if (parsed.host === fallbackHost) continue;
                 parsed.host = fallbackHost;
                 const fallbackUrl = parsed.toString();
                 const fbRes = await fetch(fallbackUrl, fetchOptions);
                 if (fbRes.ok) {
                   upstreamRes = fbRes;
                   targetUrl = fallbackUrl;
+                  break;
                 }
               }
             }
@@ -401,7 +449,7 @@ export default {
 
         if (upstreamRes.status === 403 || upstreamRes.status === 429 || upstreamRes.status >= 500) {
           if (attempt < maxAttempts) {
-            await new Promise(r => setTimeout(r, attempt * 300));
+            await new Promise((r) => setTimeout(r, attempt * 300));
             continue;
           }
         } else {
@@ -410,7 +458,7 @@ export default {
       } catch (err) {
         lastErr = err;
         if (attempt < maxAttempts) {
-          await new Promise(r => setTimeout(r, attempt * 300));
+          await new Promise((r) => setTimeout(r, attempt * 300));
           continue;
         }
       }
@@ -418,14 +466,14 @@ export default {
 
     if (!upstreamRes) {
       return Response.json(
-        { error: 'Failed to reach upstream after retries', detail: String(lastErr) },
+        { error: 'Failed to reach upstream after retries' },
         { status: 502, headers: CORS_HEADERS }
       );
     }
 
     if (!upstreamRes.ok) {
       return Response.json(
-        { error: `Upstream returned HTTP ${upstreamRes.status}`, url: targetUrl },
+        { error: `Upstream returned HTTP ${upstreamRes.status}` },
         { status: upstreamRes.status, headers: CORS_HEADERS }
       );
     }
@@ -434,6 +482,40 @@ export default {
     const contentType = upstreamRes.headers.get('content-type') || '';
     const isManifest = /\.m3u8/i.test(targetUrl) || contentType.includes('mpegurl') || contentType.includes('m3u8');
     const isSubtitle = /\.(vtt|srt|ass)$/i.test(targetUrl) || contentType.includes('vtt');
+    const isSegment =
+      /\/seg-[a-z0-9_.-]+/i.test(targetUrl) ||
+      /\/segment-[a-z0-9_.-]+/i.test(targetUrl) ||
+      /\/frag-[a-z0-9_.-]+/i.test(targetUrl) ||
+      /\.(ts|m4s|mp4|aac|m4a|webm)($|\?)/i.test(targetUrl) ||
+      targetUrl.includes('~tplv-');
+    const isRealMedia =
+      isSegment ||
+      contentType.includes('video') ||
+      contentType.includes('audio') ||
+      contentType.includes('octet-stream') ||
+      contentType.includes('mp4') ||
+      contentType.includes('mpeg') ||
+      contentType.includes('dash+xml') ||
+      contentType.includes('image/');
+
+    // Security check: If not in scrape mode, reject unexpected HTML or non-media payloads
+    if (!isScrapeMode && !isManifest && !isSubtitle && !isSegment && !isRealMedia && contentType.includes('text/html')) {
+      return Response.json(
+        { error: 'Upstream returned invalid content type for media proxy' },
+        { status: 415, headers: CORS_HEADERS }
+      );
+    }
+
+    if (isScrapeMode) {
+      const scrapeHeaders = new Headers();
+      scrapeHeaders.set('Content-Type', contentType || 'text/html; charset=utf-8');
+      scrapeHeaders.set('Cache-Control', 'no-store');
+      Object.entries(CORS_HEADERS).forEach(([k, v]) => scrapeHeaders.set(k, v));
+      return new Response(upstreamRes.body, {
+        status: upstreamRes.status,
+        headers: scrapeHeaders,
+      });
+    }
 
     const resHeaders = new Headers();
     upstreamRes.headers.forEach((value, key) => {
@@ -462,13 +544,11 @@ export default {
 
       const rewritten = text
         .split('\n')
-        .map(line => {
-          // Normalize audio codecs to prevent MSE decoding buffer error in Chrome (HE-AAC v2)
+        .map((line) => {
           if (line.includes('CODECS=')) {
             line = line.replace(/mp4a\.40\.29/g, 'mp4a.40.2').replace(/mp4a\.40\.5/g, 'mp4a.40.2');
           }
 
-          // Rewrite URI attributes in tag lines (AES keys, init maps, sub-playlists)
           if (line.includes('URI=')) {
             line = line.replace(/URI=["']([^"']+)["']/g, (match, uri) => {
               try {
@@ -477,7 +557,7 @@ export default {
 
                 let proxied = `${workerBase}/?url=${encodeURIComponent(abs)}`;
                 if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
-                if (customProxy) proxied += `&proxy=${encodeURIComponent(customProxy)}`;
+                if (safeCustomProxy) proxied += `&proxy=${encodeURIComponent(safeCustomProxy)}`;
                 return `URI="${proxied}"`;
               } catch {
                 return match;
@@ -488,14 +568,13 @@ export default {
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith('#')) return line;
 
-          // Segment or sub-playlist lines
           try {
             let resolved = trimmed.startsWith('http') ? trimmed : new URL(trimmed, targetUrl).toString();
             resolved = remapMirrorUrl(resolved);
 
             let proxied = `${workerBase}/?url=${encodeURIComponent(resolved)}`;
             if (referer) proxied += `&referer=${encodeURIComponent(referer)}`;
-            if (customProxy) proxied += `&proxy=${encodeURIComponent(customProxy)}`;
+            if (safeCustomProxy) proxied += `&proxy=${encodeURIComponent(safeCustomProxy)}`;
             return proxied;
           } catch {
             return line;
@@ -513,14 +592,14 @@ export default {
     }
 
     // ── Video / Audio Media Stream (Zero-Copy Pass-Through) ───────────────
-    const isRealMedia =
-      contentType.includes('video') ||
-      contentType.includes('audio') ||
-      contentType.includes('octet-stream') ||
-      contentType.includes('mp4') ||
-      contentType.includes('mpeg');
+    let outgoingContentType = contentType || 'application/octet-stream';
+    if (isSegment && (contentType.includes('text/html') || contentType.includes('image/'))) {
+      outgoingContentType = 'video/mp2t';
+    } else if (!isRealMedia) {
+      outgoingContentType = 'application/octet-stream';
+    }
 
-    resHeaders.set('Content-Type', isRealMedia ? contentType : 'application/octet-stream');
+    resHeaders.set('Content-Type', outgoingContentType);
     resHeaders.set('Cache-Control', 'public, max-age=86400, immutable');
 
     return new Response(upstreamRes.body, {

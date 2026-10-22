@@ -72,7 +72,7 @@ function parseSpotlight($: cheerio.CheerioAPI): SpotlightAnime[] {
     let type: string | undefined = undefined;
     let date: string | undefined = $el.find('.meta .date').text().trim() || undefined;
     let rating: string | undefined = $el.find('.meta .rating').text().trim() || undefined;
-    let quality: string | undefined = $el.find('.meta .quality').text().trim() || undefined;
+    const quality: string | undefined = $el.find('.meta .quality').text().trim() || undefined;
     let episodes: string | undefined = undefined;
 
     // Parse .ak-detail (new format)

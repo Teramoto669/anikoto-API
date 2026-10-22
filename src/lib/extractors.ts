@@ -104,13 +104,9 @@ async function _doMegaplay(
     : undefined;
 
   if (m3u8) {
-    // cdn.imgnex.top and fetch.nexabloom.top block master.m3u8 with 403, but ncdn.imgnex.top serves master.m3u8 with 200 OK
-    if (m3u8.includes('master.m3u8')) {
-      if (m3u8.includes('//cdn.imgnex.top')) {
-        m3u8 = m3u8.replace('//cdn.imgnex.top', '//ncdn.imgnex.top');
-      } else if (m3u8.includes('//fetch.nexabloom.top')) {
-        m3u8 = m3u8.replace('//fetch.nexabloom.top', '//ncdn.imgnex.top');
-      }
+    // ncdn.imgnex.top is obsolete / returns 404, normalize to active cdn.imgnex.top
+    if (m3u8.includes('//ncdn.imgnex.top')) {
+      m3u8 = m3u8.replace('//ncdn.imgnex.top', '//cdn.imgnex.top');
     } else if (m3u8.includes('mewstream.buzz')) {
       let replacementHost = '1oe.lostproject.club';
       const firstTrack = tracks.find(t => t.file && !t.file.includes('mewstream.buzz'));

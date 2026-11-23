@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeAnimeTooltip } from '@/lib/scrapers/tooltip.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -14,7 +15,7 @@ export const dynamic = 'force-dynamic';
  * Examples:
  *   /api/anime/tooltip/4127
  */
-export async function GET(
+async function handler(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -49,3 +50,5 @@ export async function GET(
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

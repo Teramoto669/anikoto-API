@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { Readable } from 'stream';
@@ -63,7 +64,7 @@ function remapMirrorUrl(urlStr: string): string {
   }
 }
 
-export async function GET(req: Request) {
+async function handler(req: Request) {
   const { searchParams, origin } = new URL(req.url);
   const rawTargetUrl = searchParams.get('url');
   const referer = searchParams.get('referer') || req.headers.get('referer') || '';
@@ -333,3 +334,5 @@ export async function GET(req: Request) {
     headers: resHeaders,
   });
 }
+
+export const GET = withApi(handler, { compress: false });

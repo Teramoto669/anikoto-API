@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeHome } from '@/lib/scrapers/home.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -17,7 +18,7 @@ export const revalidate = 0;
  *
  * @query refresh=1  Bypass cache and force re-scrape
  */
-export async function GET(req: Request) {
+async function handler(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const refresh = searchParams.get('refresh') === '1';
@@ -38,3 +39,4 @@ export async function GET(req: Request) {
   }
 }
 
+export const GET = withApi(handler);

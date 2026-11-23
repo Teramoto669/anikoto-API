@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeListingPage } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -18,7 +19,7 @@ export const dynamic = 'force-dynamic';
  * Example:
  *   /api/updated?page=2
  */
-export async function GET(req: Request) {
+async function handler(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const page = validatePage(searchParams.get('page'));
@@ -42,3 +43,4 @@ export async function GET(req: Request) {
   }
 }
 
+export const GET = withApi(handler);

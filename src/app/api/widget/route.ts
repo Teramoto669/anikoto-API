@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeHomeWidget } from '@/lib/scrapers/home.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -21,7 +22,7 @@ export const dynamic = 'force-dynamic';
  *   /api/widget?name=updated-sub
  *   /api/widget?name=trending
  */
-export async function GET(req: Request) {
+async function handler(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const rawName = searchParams.get('name')?.trim() || searchParams.get('type')?.trim() || 'updated-all';
@@ -41,3 +42,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

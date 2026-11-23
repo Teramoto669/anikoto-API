@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeListingPage } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -21,7 +22,7 @@ export const dynamic = 'force-dynamic';
  *   /api/genre/action
  *   /api/genre/romance?page=2
  */
-export async function GET(
+async function handler(
   req: Request,
   { params }: { params: Promise<{ genre: string }> }
 ) {
@@ -53,3 +54,5 @@ export async function GET(
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeAnimeDetail, scrapeAnimeEpisodes } from '@/lib/scrapers/anime.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -20,7 +21,7 @@ export const dynamic = 'force-dynamic';
  *   /api/anime/one-piece-odmau
  *   /api/anime/one-piece-odmau?start=1&end=50
  */
-export async function GET(
+async function handler(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
@@ -88,3 +89,5 @@ async function fetchAndCombine(slug: string, startEpisode?: number, endEpisode?:
   ]);
   return { ...detail, episodes };
 }
+
+export const GET = withApi(handler);

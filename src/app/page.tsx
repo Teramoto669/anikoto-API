@@ -11,6 +11,9 @@ const TAG_COLORS: Record<string, string> = {
   Browse: "#f59e0b",
   Schedule: "#fb923c",
   Watch: "#f87171",
+  Discovery: "#38bdf8",
+  AniList: "#a78bfa",
+  System: "#94a3b8",
 };
 
 // Group paths by tag

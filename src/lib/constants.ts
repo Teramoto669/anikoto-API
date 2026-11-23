@@ -32,6 +32,13 @@ export const CACHE_TTL = {
   SEARCH: 60 * 2,     // 2 minutes
   FILTER: 60 * 5,     // 5 minutes
   SCHEDULE: 60 * 60,  // 1 hour
+  LISTING: 60 * 5,    // 5 minutes — most-popular, new-release, az-list, …
+  SUGGEST: 60 * 2,    // 2 minutes
+  STREAM: 60 * 3,     // 3 minutes — stream URLs rotate quickly
+  SERVERS: 60 * 10,   // 10 minutes
+  IDS: 60 * 60 * 24,  // 24 hours — MAL ↔ AniList id mapping is effectively static
+  ANILIST: 60 * 10,   // 10 minutes
+  ANILIST_SEASON: 60 * 30, // 30 minutes
 };
 
 export const FILTER_OPTIONS = {

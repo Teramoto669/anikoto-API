@@ -1,3 +1,5 @@
+import { extraPaths } from "./openapi-extra";
+
 const refreshParam = {
   name: "refresh",
   in: "query",
@@ -1054,4 +1056,7 @@ const spec = {
   },
 } as const;
 
-export default spec;
+// Extended endpoint set (discovery, AniList, low-level streaming, system) lives in openapi-extra.ts.
+const fullSpec = { ...spec, paths: { ...spec.paths, ...extraPaths } };
+
+export default fullSpec;

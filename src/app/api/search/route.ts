@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeSearch } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -18,7 +19,7 @@ export const dynamic = 'force-dynamic';
  * Example:
  *   /api/search?keyword=one+piece
  */
-export async function GET(req: Request) {
+async function handler(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const keyword = validateKeyword(searchParams.get('keyword'));
@@ -47,3 +48,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

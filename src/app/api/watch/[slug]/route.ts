@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { scrapeWatchStream, scrapeWatch, WatchData } from '@/lib/scrapers/watch.scraper';
 import { cacheGet, cacheSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
@@ -21,7 +22,7 @@ export const dynamic = 'force-dynamic';
  * Add ?refresh=1 to bypass cache and force a fresh stream.
  * Add ?stream=false to disable streaming and return full JSON response.
  */
-export async function GET(
+async function handler(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
@@ -111,3 +112,5 @@ export async function GET(
     return Response.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

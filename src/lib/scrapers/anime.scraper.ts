@@ -1,6 +1,18 @@
 import * as cheerio from 'cheerio';
 import { fetchPage, fetchJson } from '../fetcher';
-import { AnimeDetail, Episode, AnimeEpisodes, RelatedAnime, AnimeCard } from '../types';
+import {
+  AnimeDetail,
+  Episode,
+  AnimeEpisodes,
+  RelatedAnime,
+  AnimeCard,
+  AnimeSeasons,
+  SeasonItem,
+  LatestEpisodeResult,
+  EpisodeAjaxResult,
+  EpisodeAjaxItem,
+} from '../types';
+import { ApiError } from '../api';
 import { BASE_URL } from '../constants';
 import cache, { getOrSet } from '../cache';
 import { CACHE_TTL } from '../constants';
@@ -138,7 +150,11 @@ export async function scrapeAnimeDetail(
   refresh?: boolean
 ): Promise<AnimeDetail> {
   const $ = await fetchPage(`/watch/${slug}`, undefined, refresh);
+  return parseAnimeDetail($, slug);
+}
 
+/** Pure parser for an already-loaded `/watch/<slug>` page (also used by /api/random). */
+export function parseAnimeDetail($: cheerio.CheerioAPI, slug: string): AnimeDetail {
   const $main = $('#watch-main');
   const animeId = $main.attr('data-id') ?? '';
   const animeUrl = $main.attr('data-url') ?? '';
@@ -349,4 +365,145 @@ export async function scrapeRecommendations(slug: string, refresh?: boolean): Pr
     const $ = await fetchPage(`/watch/${slug}`, undefined, refresh);
     return parseRecommendations($);
   }, CACHE_TTL.ANIME);
+}
+
+// ─── Id resolution ────────────────────────────────────────────────────────────
+
+/**
+ * Accepts either a numeric anime id or a slug and returns the numeric id.
+ * Slugs are resolved through the (cached) watch page.
+ */
+export async function resolveAnimeId(
+  slugOrId: string,
+  refresh?: boolean
+): Promise<{ animeId: string; slug: string | null }> {
+  if (/^\d+$/.test(slugOrId)) return { animeId: slugOrId, slug: null };
+
+  const $ = await fetchPage(`/watch/${slugOrId}`, undefined, refresh);
+  const animeId = $('#watch-main').attr('data-id') ?? '';
+  if (!animeId) throw new ApiError(404, `Anime not found: ${slugOrId}`);
+  return { animeId, slug: slugOrId };
+}
+
+// ─── Seasons ──────────────────────────────────────────────────────────────────
+
+export async function scrapeSeasons(slugOrId: string, refresh?: boolean): Promise<AnimeSeasons> {
+  const cacheKey = `anime:seasons:${slugOrId}`;
+  if (refresh) cache.del(cacheKey);
+
+  return getOrSet(cacheKey, async () => {
+    const { animeId, slug } = await resolveAnimeId(slugOrId, refresh);
+
+    const payload = await fetchJson<{ status?: number | boolean; result?: string }>(
+      `/api/seasons/${animeId}`
+    );
+    const fragment =
+      payload && Number(payload.status) === 200 && typeof payload.result === 'string'
+        ? payload.result
+        : '';
+
+    const $ = cheerio.load(fragment);
+    const seasons: SeasonItem[] = [];
+    const seen = new Set<string>();
+
+    $('#w-seasons .swiper-slide.season, .seasons .swiper-slide.season, #w-seasons .item').each((_, el) => {
+      const $el = $(el);
+      const $link = $el.find('a').first();
+      const href = $link.attr('href') ?? '';
+      const title = $el.find('.name, .title').first().text().trim() || $link.text().trim();
+      const style = $link.attr('style') ?? $el.attr('style') ?? '';
+      const image =
+        style.match(/url\((['"]?)([^'")]+)\1\)/)?.[2] ?? $el.find('img').attr('src') ?? '';
+      const seasonSlug = (href.split('/watch/').pop() ?? '').split(/[?#]/)[0].replace(/\/$/, '');
+
+      if (title && seasonSlug && !seen.has(seasonSlug)) {
+        seen.add(seasonSlug);
+        seasons.push({ title, slug: seasonSlug, image, url: href, active: $el.hasClass('active') });
+      }
+    });
+
+    return { animeId, slug, totalSeasons: seasons.length, seasons };
+  }, CACHE_TTL.ANIME);
+}
+
+// ─── Latest episode ───────────────────────────────────────────────────────────
+
+export async function scrapeLatestEpisode(
+  slug: string,
+  refresh?: boolean
+): Promise<LatestEpisodeResult> {
+  const { animeId, episodes } = await scrapeAnimeEpisodes(slug, undefined, undefined, refresh);
+  if (episodes.length === 0) throw new ApiError(404, 'No episodes found for this anime');
+
+  // Episode numbers can be decimals ("12.5"); compare numerically, fall back to list order.
+  let latest = episodes[episodes.length - 1];
+  let best = Number.NEGATIVE_INFINITY;
+  for (const ep of episodes) {
+    const n = Number.parseFloat(ep.number);
+    if (!Number.isNaN(n) && n >= best) {
+      best = n;
+      latest = ep;
+    }
+  }
+
+  return { slug, animeId, totalEpisodes: episodes.length, latest };
+}
+
+// ─── Episode list (raw AJAX view with filters / ranges) ───────────────────────
+
+export async function scrapeEpisodesAjax(
+  slugOrId: string,
+  opts: { style?: string; vrf?: string } = {},
+  refresh?: boolean
+): Promise<EpisodeAjaxResult> {
+  const { animeId } = await resolveAnimeId(slugOrId, refresh);
+
+  const qs = new URLSearchParams();
+  if (opts.style) qs.set('style', opts.style);
+  if (opts.vrf) qs.set('vrf', opts.vrf);
+  const query = qs.toString();
+
+  const payload = await fetchJson<{ status?: boolean | number; result?: string }>(
+    `/ajax/episode/list/${animeId}${query ? `?${query}` : ''}`,
+    undefined,
+    refresh
+  );
+  const $ = cheerio.load(payload?.result ?? '');
+
+  const filters: EpisodeAjaxResult['filters'] = [];
+  $('.dropdown.filter').each((_, el) => {
+    const options: { value: string; label: string }[] = [];
+    $(el)
+      .find('.dropdown-item')
+      .each((__, item) => {
+        options.push({ value: $(item).attr('data-value') ?? '', label: $(item).text().trim() });
+      });
+    filters.push({ name: $(el).find('button').text().trim(), options });
+  });
+
+  const ranges: string[] = [];
+  $('.ep-range').each((_, el) => {
+    ranges.push($(el).attr('data-range') ?? '');
+  });
+
+  const episodes: EpisodeAjaxItem[] = [];
+  $('li[data-html]').each((_, li) => {
+    const $a = $(li).find('a').first();
+    if (!$a.length) return;
+    episodes.push({
+      id: $a.attr('data-id') ?? '',
+      number: $a.attr('data-num') ?? String(episodes.length + 1),
+      slug: $a.attr('data-slug') || undefined,
+      title: $(li).attr('title')?.trim() || undefined,
+      titleJp: $a.find('.d-title').attr('data-jp')?.trim() || undefined,
+      malId: $a.attr('data-mal') || undefined,
+      timestamp: $a.attr('data-timestamp') || undefined,
+      dataIds: ($a.attr('data-ids') ?? '').replace(/^\\?["']|\\?["']$/g, '') || undefined,
+      hasSub: $a.attr('data-sub') === '1',
+      hasDub: $a.attr('data-dub') === '1',
+      active: $a.hasClass('active'),
+    });
+  });
+
+  return { animeId, filters, ranges, totalEpisodes: episodes.length, episodes };
 }

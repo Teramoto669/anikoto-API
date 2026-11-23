@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeFilter } from '@/lib/scrapers/search.scraper';
 import { FilterParams } from '@/lib/types';
@@ -25,7 +26,7 @@ export const dynamic = 'force-dynamic';
  * Example:
  *   /api/filter?genre[]=action&genre[]=romance&year[]=2026&sort=score
  */
-export async function GET(req: Request) {
+async function handler(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
 
@@ -80,3 +81,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

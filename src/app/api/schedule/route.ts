@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeSchedule } from '@/lib/scrapers/schedule.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -14,7 +15,7 @@ export const dynamic = 'force-dynamic';
  * Query parameters:
  *   refresh=1  – bypass cache
  */
-export async function GET(req: Request) {
+async function handler(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const refresh = searchParams.get('refresh') === '1';
@@ -33,3 +34,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

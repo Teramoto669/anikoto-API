@@ -79,7 +79,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   ]);
 }
 
-function makeProxyHelper() {
+export function makeProxyHelper() {
   const rawBaseUrl = process.env.NEXT_PUBLIC_CF_WORKER_URL || process.env.CF_WORKER_URL || '/api/proxy';
   let proxyBase = rawBaseUrl.trim();
   if (proxyBase && !proxyBase.startsWith('http') && !proxyBase.startsWith('/')) {
@@ -92,7 +92,7 @@ function makeProxyHelper() {
   };
 }
 
-function parseSkipData(skipData: unknown): { intro?: IntroOutro; outro?: IntroOutro } {
+export function parseSkipData(skipData: unknown): { intro?: IntroOutro; outro?: IntroOutro } {
   const result: { intro?: IntroOutro; outro?: IntroOutro } = {};
   const data = skipData as { intro?: unknown[]; outro?: unknown[] } | undefined;
   if (data?.intro && Array.isArray(data.intro) && data.intro.length >= 2) {

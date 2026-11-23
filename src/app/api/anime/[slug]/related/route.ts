@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeRelatedAnime } from '@/lib/scrapers/anime.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -11,7 +12,7 @@ export const dynamic = 'force-dynamic';
  *
  * Returns the related anime (watch order/sequels/prequels/etc.) for a given anime slug.
  */
-export async function GET(
+async function handler(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
@@ -41,3 +42,5 @@ export async function GET(
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

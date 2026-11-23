@@ -77,6 +77,64 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 | GET | `/api/watch/:slug?ep=` | Streaming sources (m3u8, subtitles, and opening/ending skip ranges) |
 | GET | `/api/proxy?url=` | High-volume streaming proxy (CORS bypass, zero-copy streaming, proxy routing) |
 
+### Discovery & lists
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/spotlight` | Spotlight carousel (from the home scrape) |
+| GET | `/api/top-ten` | Top anime `{ today, week, month }` |
+| GET | `/api/trending?page=` | Trending anime (AJAX widget, paginated) |
+| GET | `/api/trending-sidebar` | Sidebar bundle: top day/week/month + latest episodes |
+| GET | `/api/top-rankings?sort=day\|week\|month` | Ranked top anime for one window |
+| GET | `/api/recently-updated?tab=all\|sub\|dub&page=` | Recently updated episodes by audio track |
+| GET | `/api/completed` | Recently completed anime |
+| GET | `/api/random` | Random anime (full detail + resolved `url`, never cached) |
+| GET | `/api/most-popular?page=` | Most viewed anime |
+| GET | `/api/new-release?page=` | New releases |
+| GET | `/api/newly-added?page=` | Newly added anime |
+| GET | `/api/upcoming?page=` | Not-yet-aired anime |
+| GET | `/api/az-list/:letter?page=` | A–Z list (`a`–`z`, `0`–`9`, `other`, `all`) |
+| GET | `/api/search/suggest?keyword=` | Autocomplete suggestions (max 10) |
+| GET | `/api/suggestions?keyword=` | Rich suggestions as full cards (max 10) |
+
+### Anime extras & AniList
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/anime/:slug/seasons` | Seasons of an anime (`:slug` may be the numeric id) |
+| GET | `/api/anime/:slug/episodes/latest` | Newest episode + episode count |
+| GET | `/api/anime/:slug/episodes/ajax?style=&vrf=` | Raw episode list with filters, ranges, `dataIds`, `malId`, `timestamp` |
+| GET | `/api/anilist?id=` or `?mal=` | AniList metadata by AniList or MAL id |
+| GET | `/api/anilist/:id` | AniList metadata (path form) |
+| GET | `/api/anilist/season?season=&year=&page=&perPage=` | Seasonal chart from AniList |
+
+### Streaming building blocks
+
+`/api/watch/:slug` runs the whole pipeline for you; these expose the individual steps.
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/servers?ids=&slug=` | Servers for an episode (`ids` = the episode's `dataIds`) |
+| GET | `/api/stream?id=&slug=&sv=` | Embed URL + skip data for a server `linkId` |
+| GET | `/api/stream/resolve?id=&slug=&type=` | `linkId` → playable HLS (m3u8, proxy URL, qualities, subtitles, skip ranges) |
+| GET | `/api/stream/qualities?url=&referer=` | Quality variants of an HLS master playlist (allow-listed domains only) |
+| GET | `/api/stream/embeds?slug=&ep=&lang=&provider=` | Ready-to-iframe player URLs (megaplay, anixo, megavid) |
+| GET | `/api/mapper-servers?malId=&slug=&timestamp=` | Mapper sources per provider |
+| GET | `/api/download?slug=&ep=` | Episode download links |
+| GET | `/api/stream/proxy`, `/api/stream/ts-proxy` | Aliases of `/api/proxy` (original AniKotoAPI paths) |
+
+### System
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Liveness: status, version, uptime, memory |
+| GET | `/api/stats` | Request counters, cache usage, feature flags |
+| GET | `/api/cache/stats` | Cache keys, hits, misses, hit rate |
+| GET | `/api/mirrors` | Health/latency of each upstream mirror |
+| POST | `/api/mirrors/reset` | Clear mirror failure state (needs `ADMIN_TOKEN` bearer if set) |
+| GET | `/api/proxy/status` | Outbound proxy pool health (credentials masked) |
+| GET | `/api/openapi` | OpenAPI 3.0 document as JSON |
+
 See the **full interactive documentation** at `/` (when running locally) or in [`public/openapi.yaml`](./public/openapi.yaml).
 
 ---
@@ -118,7 +176,39 @@ CF_WORKER_URL=https://your-worker-name.workers.dev
 
 # Optional: Comma-separated list of HTTP/HTTPS/SOCKS proxies for outbound routing
 PROXIES=http://user:pass@node1.proxy.com:8080,http://node2.proxy.com:8080
+
+# Optional: Brotli response compression (falls back to gzip, then identity)
+ENABLE_BROTLI=true
+BROTLI_QUALITY=5            # 0-11 (default 5)
+GZIP_LEVEL=6                # 1-9 (default 6)
+COMPRESSION_MIN_BYTES=1024  # skip tiny bodies (default 1024)
+
+# Optional: fallback upstream mirrors, tried in order after BASE_URL
+MIRROR_DOMAINS=https://anikototv.to,https://anikoto.cz
+MIRROR_COOLDOWN_MS=60000    # how long a failed mirror is deprioritised (default 60000)
+
+# Optional: protect POST /api/mirrors/reset (send "Authorization: Bearer <token>")
+ADMIN_TOKEN=change-me
+
+# Optional: default Referer for /api/stream/qualities when none is given
+STREAM_PROXY_REFERER=https://megaplay.buzz/
 ```
+
+### 🗜️ Compression (Brotli → gzip)
+
+Set `ENABLE_BROTLI=true` to compress JSON responses yourself instead of leaving it to the platform:
+
+| Client sends | Response |
+|--------------|----------|
+| `Accept-Encoding: br, gzip` | Brotli (`Content-Encoding: br`) |
+| `Accept-Encoding: gzip` | gzip (fallback) |
+| nothing / `identity` | uncompressed |
+
+`q`-values are honoured (`br;q=0` is treated as "no Brotli"), `Vary: Accept-Encoding` is set, and bodies under `COMPRESSION_MIN_BYTES` or that wouldn't shrink are sent as-is. If Brotli ever throws, that response is gzipped. The streaming proxy and SSE responses are never buffered or compressed. With `ENABLE_BROTLI` unset nothing changes: Next.js' built-in gzip (`next start`) or your host/CDN's compression applies.
+
+### 🪞 Mirrors
+
+`BASE_URL` is always the primary. With `MIRROR_DOMAINS` set, a request that fails (network error, 5xx, 403/429, or a Cloudflare challenge page) is retried on the next mirror; a mirror that fails is tried last for `MIRROR_COOLDOWN_MS`. Check `/api/mirrors`; clear state with `POST /api/mirrors/reset`. Without `MIRROR_DOMAINS` behaviour is exactly as before.
 
 ---
 
@@ -165,19 +255,29 @@ src/
 │       ├── type/         # GET /api/type/:type
 │       ├── schedule/     # GET /api/schedule
 │       ├── watch/        # GET /api/watch/:slug
-│       └── proxy/        # GET /api/proxy
+│       ├── proxy/        # GET /api/proxy (+ /status)
+│       ├── stream/       # /api/stream, /resolve, /qualities, /embeds, proxy aliases
+│       └── …             # spotlight, top-ten, az-list, anilist, servers, download,
+│                         # health, stats, mirrors, openapi, etc. (see tables above)
 ├── lib/
 │   ├── proxy-pool.ts     # Proxy pool manager & SSRF guard
 │   ├── types.ts          # TypeScript interfaces
 │   ├── constants.ts      # Base URL, cache TTLs, filter options
 │   ├── cache.ts          # Node-Cache instance
-│   ├── fetcher.ts        # Axios & proxy pool based HTML fetcher
+│   ├── fetcher.ts        # Axios & proxy pool based HTML fetcher (mirror failover)
+│   ├── api.ts            # withApi wrapper, ok/fail helpers, ApiError
+│   ├── compression.ts    # Optional Brotli → gzip response compression
+│   ├── mirrors.ts        # Upstream mirror selection & health
+│   ├── metrics.ts        # Request counters for /api/health and /api/stats
+│   ├── anilist.ts        # AniList GraphQL helpers
 │   ├── extractors.ts     # Cheerio extraction helpers
 │   └── scrapers/         # Per-endpoint scraping logic
 │       ├── anime.scraper.ts
 │       ├── home.scraper.ts
 │       ├── schedule.scraper.ts
 │       ├── search.scraper.ts
+│       ├── discovery.scraper.ts
+│       ├── stream.scraper.ts
 │       ├── tooltip.scraper.ts
 │       └── watch.scraper.ts
 public/

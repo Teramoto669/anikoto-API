@@ -309,6 +309,20 @@ export function isAllowedStreamDomain(targetUrl: string, referer?: string): bool
   }
 }
 
+/** Hide user:pass in a proxy URL so it is safe to expose in status output. */
+function maskProxyUrl(proxyUrl: string): string {
+  try {
+    const parsed = new URL(proxyUrl);
+    if (parsed.username || parsed.password) {
+      parsed.username = '***';
+      parsed.password = '***';
+    }
+    return parsed.toString();
+  } catch {
+    return proxyUrl.replace(/\/\/[^@/]+@/, '//***:***@');
+  }
+}
+
 // ── Proxy Pool Manager ──────────────────────────────────────────────────────
 class ProxyPoolManager {
   private proxies: string[] = [];
@@ -404,6 +418,35 @@ class ProxyPoolManager {
   public reportSuccess(proxyUrl: string): void {
     if (!proxyUrl) return;
     this.failedProxies.delete(proxyUrl);
+  }
+
+  /**
+   * Snapshot of pool health for /api/proxy/status. Credentials are masked.
+   */
+  public status(): {
+    configured: boolean;
+    total: number;
+    healthy: number;
+    coolDownMs: number;
+    proxies: { url: string; healthy: boolean; coolDownRemainingMs: number }[];
+  } {
+    const now = Date.now();
+    const proxies = this.proxies.map((p) => {
+      const failedAt = this.failedProxies.get(p);
+      const remaining = failedAt ? Math.max(0, this.coolDownMs - (now - failedAt)) : 0;
+      return {
+        url: maskProxyUrl(p),
+        healthy: remaining === 0,
+        coolDownRemainingMs: remaining,
+      };
+    });
+    return {
+      configured: proxies.length > 0,
+      total: proxies.length,
+      healthy: proxies.filter((p) => p.healthy).length,
+      coolDownMs: this.coolDownMs,
+      proxies,
+    };
   }
 
   /**

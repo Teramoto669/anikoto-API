@@ -259,3 +259,94 @@ export interface AnimeTooltip {
   href?: string;
 }
 
+
+// ─── Listings & discovery ────────────────────────────────────────────────────
+
+export interface ListingResult {
+  results: AnimeCard[];
+  topRated?: AnimeCard[];
+  currentPage: number;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+  minPage?: number;
+  maxPage?: number;
+}
+
+export interface AzListResult extends ListingResult {
+  letter: string;
+}
+
+export type RankingWindow = 'day' | 'week' | 'month';
+
+export interface TopTenResult {
+  today: TopAnimeItem[];
+  week: TopAnimeItem[];
+  month: TopAnimeItem[];
+}
+
+export interface TrendingSidebarResult {
+  day: TopAnimeItem[];
+  week: TopAnimeItem[];
+  month: TopAnimeItem[];
+  latestEpisodes: LatestEpisodeItem[];
+}
+
+export interface SuggestionItem {
+  id: string;
+  slug: string;
+  title: string;
+  titleJp?: string;
+  image: string;
+  href: string;
+  type?: string;
+}
+
+export interface RandomAnime extends AnimeDetail {
+  url: string;
+}
+
+// ─── Seasons / episode helpers ───────────────────────────────────────────────
+
+export interface SeasonItem {
+  title: string;
+  slug: string;
+  image: string;
+  url: string;
+  active: boolean;
+}
+
+export interface AnimeSeasons {
+  animeId: string;
+  slug: string | null;
+  totalSeasons: number;
+  seasons: SeasonItem[];
+}
+
+export interface LatestEpisodeResult {
+  slug: string;
+  animeId: string;
+  totalEpisodes: number;
+  latest: Episode;
+}
+
+export interface EpisodeAjaxItem {
+  id: string;
+  number: string;
+  slug?: string;
+  title?: string;
+  titleJp?: string;
+  malId?: string;
+  timestamp?: string;
+  dataIds?: string;
+  hasSub: boolean;
+  hasDub: boolean;
+  active: boolean;
+}
+
+export interface EpisodeAjaxResult {
+  animeId: string;
+  filters: { name: string; options: { value: string; label: string }[] }[];
+  ranges: string[];
+  totalEpisodes: number;
+  episodes: EpisodeAjaxItem[];
+}

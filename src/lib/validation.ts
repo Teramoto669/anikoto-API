@@ -129,3 +129,76 @@ export function sanitizeUrlForLogging(rawUrl: string): string {
     return rawUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
   }
 }
+
+// ─── Validators added for the extended endpoint set ──────────────────────────
+
+/** A-Z list segment: a single letter/digit, "other", or "all". */
+export function validateLetter(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim().toLowerCase();
+  return /^(?:[a-z0-9]|other|all)$/.test(trimmed) ? trimmed : null;
+}
+
+/** Recently-updated tab. */
+export function validateUpdatedTab(value: unknown): 'all' | 'sub' | 'dub' | null {
+  if (value === undefined || value === null || value === '') return 'all';
+  if (typeof value !== 'string') return null;
+  const v = value.trim().toLowerCase();
+  return v === 'all' || v === 'sub' || v === 'dub' ? v : null;
+}
+
+/** Ranking window for /api/top-rankings. */
+export function validateRankingWindow(value: unknown): 'day' | 'week' | 'month' | null {
+  if (value === undefined || value === null || value === '') return 'day';
+  if (typeof value !== 'string') return null;
+  const v = value.trim().toLowerCase();
+  return v === 'day' || v === 'week' || v === 'month' ? v : null;
+}
+
+/** Episode number as used in `/watch/<slug>/ep-<n>` (integers or decimals like 12.5). */
+export function validateEpisodeNumber(value: unknown, fallback?: string): string | null {
+  if (value === undefined || value === null || value === '') return fallback ?? null;
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  return /^\d{1,5}(\.\d{1,2})?$/.test(v) ? v : null;
+}
+
+/**
+ * Opaque upstream identifiers (server link ids, `data-ids` lists). They are
+ * placed in an upstream query string, so restrict to a conservative charset.
+ */
+export function validateOpaqueId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  if (!v || v.length > 512) return null;
+  return /^[A-Za-z0-9_\-.,:=+/]+$/.test(v) ? v : null;
+}
+
+/** Short token for upstream query params such as `style` / `vrf`. */
+export function validateToken(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  return /^[A-Za-z0-9_\-]{1,64}$/.test(v) ? v : null;
+}
+
+/** Positive integer id (MAL / AniList / timestamps). Returns the numeric string. */
+export function validateNumericString(value: unknown, maxLen = 16): string | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  return v.length > 0 && v.length <= maxLen && /^\d+$/.test(v) ? v : null;
+}
+
+/** Strict http(s) URL, no embedded credentials. */
+export function validateHttpUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const v = value.trim();
+  if (!v || v.length > 2048) return null;
+  try {
+    const u = new URL(v);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    if (u.username || u.password) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}

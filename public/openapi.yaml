@@ -47,6 +47,12 @@ tags:
     description: Weekly airing schedule
   - name: Watch
     description: Streaming sources, SSE streaming, and proxy
+  - name: Discovery
+    description: Home-page sections, rankings, listings, A-Z, suggestions and random anime
+  - name: AniList
+    description: AniList GraphQL lookups (id / MAL id / seasonal chart)
+  - name: System
+    description: Health, stats, cache, mirror failover and proxy pool status
 
 paths:
   /home:
@@ -902,6 +908,1698 @@ paths:
                     type: string
                   url:
                     type: string
+  /spotlight:
+    get:
+      tags:
+        - Discovery
+      summary: Spotlight carousel
+      description: Featured anime from the home page spotlight carousel. Shares the cached home scrape with /home.
+      operationId: getSpotlight
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: SpotlightAnime (see src/lib/types.ts)
+        '500':
+          description: Internal server error
+  /top-ten:
+    get:
+      tags:
+        - Discovery
+      summary: Top ten (today / week / month)
+      description: Top anime for today, this week and this month.
+      operationId: getTopTen
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      today:
+                        type: array
+                        items:
+                          type: object
+                          description: TopAnimeItem (see src/lib/types.ts)
+                      week:
+                        type: array
+                        items:
+                          type: object
+                          description: TopAnimeItem (see src/lib/types.ts)
+                      month:
+                        type: array
+                        items:
+                          type: object
+                          description: TopAnimeItem (see src/lib/types.ts)
+        '500':
+          description: Internal server error
+  /trending:
+    get:
+      tags:
+        - Discovery
+      summary: Trending anime
+      description: Trending anime from the home page's AJAX widget (paginated). Equivalent to /widget?name=trending.
+      operationId: getTrending
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: 'Widget result: items + pagination'
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /trending-sidebar:
+    get:
+      tags:
+        - Discovery
+      summary: Trending sidebar bundle
+      description: Top day / week / month lists plus the latest episodes, as shown in the site sidebar.
+      operationId: getTrendingSidebar
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      day:
+                        type: array
+                        items:
+                          type: object
+                          description: TopAnimeItem (see src/lib/types.ts)
+                      week:
+                        type: array
+                        items:
+                          type: object
+                          description: TopAnimeItem (see src/lib/types.ts)
+                      month:
+                        type: array
+                        items:
+                          type: object
+                          description: TopAnimeItem (see src/lib/types.ts)
+                      latestEpisodes:
+                        type: array
+                        items:
+                          type: object
+                          description: LatestEpisodeItem (see src/lib/types.ts)
+        '500':
+          description: Internal server error
+  /top-rankings:
+    get:
+      tags:
+        - Discovery
+      summary: Top rankings for one window
+      description: Ranked top anime for a single time window, de-duplicated.
+      operationId: getTopRankings
+      parameters:
+        - name: sort
+          in: query
+          required: false
+          description: Ranking window
+          schema:
+            type: string
+            enum:
+              - day
+              - week
+              - month
+          example: day
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      sort:
+                        type: string
+                        example: day
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          description: TopAnimeItem (see src/lib/types.ts)
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /recently-updated:
+    get:
+      tags:
+        - Discovery
+      summary: Recently updated episodes
+      description: Recently updated episodes split by audio track (paginated, AJAX-backed).
+      operationId: getRecentlyUpdated
+      parameters:
+        - name: tab
+          in: query
+          required: false
+          description: Audio filter
+          schema:
+            type: string
+            enum:
+              - all
+              - sub
+              - dub
+          example: all
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: 'tab + widget result: items + pagination'
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /completed:
+    get:
+      tags:
+        - Discovery
+      summary: Recently completed anime
+      description: Recently completed anime from the home page.
+      operationId: getCompleted
+      parameters:
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: TopTableItem (see src/lib/types.ts)
+        '500':
+          description: Internal server error
+  /random:
+    get:
+      tags:
+        - Discovery
+      summary: Random anime
+      description: Follows the site's /random redirect and returns that anime's detail object plus its resolved `url`. Never cached.
+      operationId: getRandom
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: AnimeDetail (see src/lib/types.ts)
+        '500':
+          description: Internal server error
+        '502':
+          description: Upstream did not redirect to an anime page
+  /most-popular:
+    get:
+      tags:
+        - Browse
+      summary: Most popular anime
+      description: Most viewed anime (site listing /most-viewed).
+      operationId: getMostPopular
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      topRated:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      currentPage:
+                        type: integer
+                        example: 1
+                      hasNextPage:
+                        type: boolean
+                      hasPreviousPage:
+                        type: boolean
+                      minPage:
+                        type: integer
+                      maxPage:
+                        type: integer
+        '500':
+          description: Internal server error
+  /new-release:
+    get:
+      tags:
+        - Browse
+      summary: New releases
+      description: Newly released anime (site listing /new-release).
+      operationId: getNewRelease
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      topRated:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      currentPage:
+                        type: integer
+                        example: 1
+                      hasNextPage:
+                        type: boolean
+                      hasPreviousPage:
+                        type: boolean
+                      minPage:
+                        type: integer
+                      maxPage:
+                        type: integer
+        '500':
+          description: Internal server error
+  /newly-added:
+    get:
+      tags:
+        - Browse
+      summary: Newly added anime
+      description: Recently added anime (site listing /latest-updated?sort=added).
+      operationId: getNewlyAdded
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      topRated:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      currentPage:
+                        type: integer
+                        example: 1
+                      hasNextPage:
+                        type: boolean
+                      hasPreviousPage:
+                        type: boolean
+                      minPage:
+                        type: integer
+                      maxPage:
+                        type: integer
+        '500':
+          description: Internal server error
+  /upcoming:
+    get:
+      tags:
+        - Browse
+      summary: Upcoming anime
+      description: Not-yet-aired anime (site listing /status/not-yet-aired).
+      operationId: getUpcoming
+      parameters:
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      topRated:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      currentPage:
+                        type: integer
+                        example: 1
+                      hasNextPage:
+                        type: boolean
+                      hasPreviousPage:
+                        type: boolean
+                      minPage:
+                        type: integer
+                      maxPage:
+                        type: integer
+        '500':
+          description: Internal server error
+  /az-list/{letter}:
+    get:
+      tags:
+        - Browse
+      summary: A-Z list
+      description: Alphabetical listing. `letter` is a single letter/digit, `other`, or `all`.
+      operationId: getAzList
+      parameters:
+        - name: letter
+          in: path
+          required: true
+          description: Letter, digit, `other` or `all`
+          schema:
+            type: string
+          example: a
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      results:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      topRated:
+                        type: array
+                        items:
+                          type: object
+                          description: AnimeCard (see src/lib/types.ts)
+                      currentPage:
+                        type: integer
+                        example: 1
+                      hasNextPage:
+                        type: boolean
+                      hasPreviousPage:
+                        type: boolean
+                      minPage:
+                        type: integer
+                      maxPage:
+                        type: integer
+                      letter:
+                        type: string
+                        example: a
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /search/suggest:
+    get:
+      tags:
+        - Browse
+      summary: Search autocomplete
+      description: Up to 10 lightweight suggestions (id, slug, title, image, type) for a keyword.
+      operationId: searchSuggest
+      parameters:
+        - name: keyword
+          in: query
+          required: true
+          description: Search text
+          schema:
+            type: string
+          example: naruto
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: SuggestionItem (see src/lib/types.ts)
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /suggestions:
+    get:
+      tags:
+        - Browse
+      summary: Rich search suggestions
+      description: Up to 10 full anime cards (including sub/dub episode counts) for a keyword.
+      operationId: getSuggestions
+      parameters:
+        - name: keyword
+          in: query
+          required: true
+          description: Search text
+          schema:
+            type: string
+          example: naruto
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: AnimeCard (see src/lib/types.ts)
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /anime/{slug}/seasons:
+    get:
+      tags:
+        - Anime
+      summary: Seasons of an anime
+      description: The site's season switcher for an anime. `slug` may also be the numeric anime id.
+      operationId: getAnimeSeasons
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Anime slug (or numeric anime id)
+          schema:
+            type: string
+          example: one-piece-100
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: AnimeSeasons (see src/lib/types.ts)
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /anime/{slug}/episodes/latest:
+    get:
+      tags:
+        - Anime
+      summary: Latest episode
+      description: Newest released episode (highest episode number) plus the total episode count.
+      operationId: getLatestEpisode
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Anime slug (or numeric anime id)
+          schema:
+            type: string
+          example: one-piece-100
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: LatestEpisodeResult (see src/lib/types.ts)
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /anime/{slug}/episodes/ajax:
+    get:
+      tags:
+        - Anime
+      summary: Episode list (raw AJAX view)
+      description: Episodes with the site's filters and range tabs, per-episode dataIds, malId and timestamp. `slug` may also be the numeric anime id.
+      operationId: getEpisodesAjax
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          description: Anime slug (or numeric anime id)
+          schema:
+            type: string
+          example: one-piece-100
+        - name: style
+          in: query
+          required: false
+          description: Optional list style passed to the site
+          schema:
+            type: string
+        - name: vrf
+          in: query
+          required: false
+          description: Optional token passed to the site
+          schema:
+            type: string
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: EpisodeAjaxResult (see src/lib/types.ts)
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /anilist:
+    get:
+      tags:
+        - AniList
+      summary: AniList metadata (query)
+      description: Look up AniList metadata by AniList id (`id`) or MAL id (`mal`).
+      operationId: getAnilist
+      parameters:
+        - name: id
+          in: query
+          required: false
+          description: AniList id
+          schema:
+            type: string
+          example: '21'
+        - name: mal
+          in: query
+          required: false
+          description: MAL id (alternative to id)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: AniList Media object
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /anilist/{id}:
+    get:
+      tags:
+        - AniList
+      summary: AniList metadata (path)
+      description: AniList metadata for a numeric AniList id.
+      operationId: getAnilistById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: AniList id
+          schema:
+            type: string
+          example: '21'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: AniList Media object
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /anilist/season:
+    get:
+      tags:
+        - AniList
+      summary: Seasonal chart
+      description: Seasonal anime from AniList ordered by popularity. Defaults to the current season/year.
+      operationId: getAnilistSeason
+      parameters:
+        - name: season
+          in: query
+          required: false
+          description: Season
+          schema:
+            type: string
+            enum:
+              - WINTER
+              - SPRING
+              - SUMMER
+              - FALL
+          example: FALL
+        - name: year
+          in: query
+          required: false
+          description: Year (1940-2100)
+          schema:
+            type: integer
+          example: '2026'
+        - name: page
+          in: query
+          required: false
+          description: 'Page number (default: 1)'
+          schema:
+            type: integer
+          example: '1'
+        - name: perPage
+          in: query
+          required: false
+          description: Items per page (max 50, default 25)
+          schema:
+            type: integer
+          example: '25'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: season, year, page, perPage, pageInfo, media[]
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /servers:
+    get:
+      tags:
+        - Watch
+      summary: Servers for an episode
+      description: Video servers (sub/dub/softsub) for one episode. `ids` is the episode's `dataIds`; each server's `linkId` feeds /stream and /stream/resolve.
+      operationId: getServers
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          description: Episode dataIds
+          schema:
+            type: string
+        - name: slug
+          in: query
+          required: false
+          description: Anime slug (improves Referer)
+          schema:
+            type: string
+          example: one-piece-100
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: type, typeLabel, epId, linkId, cmid, svId, name, normalizedName
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /stream:
+    get:
+      tags:
+        - Watch
+      summary: Stream info for a server link
+      description: Embed/player URL and intro/outro skip ranges for one server `linkId`. Use /stream/resolve for a playable HLS URL.
+      operationId: getStreamInfo
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Server linkId
+          schema:
+            type: string
+        - name: slug
+          in: query
+          required: false
+          description: Anime slug
+          schema:
+            type: string
+          example: one-piece-100
+        - name: sv
+          in: query
+          required: false
+          description: Server id
+          schema:
+            type: string
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: linkId, url, type, skipData, backup
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /mapper-servers:
+    get:
+      tags:
+        - Watch
+      summary: Mapper servers
+      description: Mapper-provided sources per provider (sub/dub) with embed and download URLs.
+      operationId: getMapperServers
+      parameters:
+        - name: malId
+          in: query
+          required: true
+          description: MAL id
+          schema:
+            type: string
+          example: '21'
+        - name: slug
+          in: query
+          required: true
+          description: Anime slug
+          schema:
+            type: string
+          example: one-piece-100
+        - name: timestamp
+          in: query
+          required: true
+          description: Episode timestamp
+          schema:
+            type: string
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: provider, type, url, download
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /stream/resolve:
+    get:
+      tags:
+        - Watch
+      summary: Resolve a server link to HLS
+      description: 'Resolves a server link to a playable stream: m3u8, proxied URL, qualities, subtitles and skip data. When extraction fails, `m3u8` is null and `error` is set.'
+      operationId: resolveStream
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: Server linkId
+          schema:
+            type: string
+        - name: slug
+          in: query
+          required: false
+          description: Anime slug
+          schema:
+            type: string
+          example: one-piece-100
+        - name: sv
+          in: query
+          required: false
+          description: Server id
+          schema:
+            type: string
+        - name: type
+          in: query
+          required: false
+          description: Audio track hint
+          schema:
+            type: string
+            enum:
+              - sub
+              - dub
+              - softsub
+              - hsub
+              - raw
+          example: sub
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: linkId, embedUrl, m3u8, proxyUrl, qualities[], subtitles[], skipData
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /stream/qualities:
+    get:
+      tags:
+        - Watch
+      summary: HLS quality variants
+      description: Lists the variants of an HLS master playlist, best first. `url` must be on an authorised streaming domain and never a private address.
+      operationId: getStreamQualities
+      parameters:
+        - name: url
+          in: query
+          required: true
+          description: Master playlist URL
+          schema:
+            type: string
+        - name: referer
+          in: query
+          required: false
+          description: Referer to send
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: url, totalQualities, qualities[] (label, width, height, bandwidth, url, proxyUrl)
+        '400':
+          description: Invalid or missing parameters
+        '403':
+          description: Domain not allowed / private address
+        '500':
+          description: Internal server error
+  /stream/embeds:
+    get:
+      tags:
+        - Watch
+      summary: Third-party embed URLs
+      description: Ready-to-iframe player URLs (megaplay, anixo, megavid) for an episode. Identify the anime with `slug`, `mal` or `anilist`.
+      operationId: getStreamEmbeds
+      parameters:
+        - name: slug
+          in: query
+          required: false
+          description: Anime slug
+          schema:
+            type: string
+          example: one-piece-100
+        - name: mal
+          in: query
+          required: false
+          description: MAL id
+          schema:
+            type: string
+        - name: anilist
+          in: query
+          required: false
+          description: AniList id
+          schema:
+            type: string
+        - name: ep
+          in: query
+          required: false
+          description: Episode number (default 1)
+          schema:
+            type: integer
+          example: '1'
+        - name: lang
+          in: query
+          required: false
+          description: Audio
+          schema:
+            type: string
+            enum:
+              - sub
+              - dub
+          example: sub
+        - name: provider
+          in: query
+          required: false
+          description: Comma-separated provider ids
+          schema:
+            type: string
+          example: megaplay,anixo
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: slug, episode, lang, ids, providers[], unavailable[]
+        '400':
+          description: Invalid or missing parameters
+        '500':
+          description: Internal server error
+  /download:
+    get:
+      tags:
+        - Watch
+      summary: Episode download links
+      description: Download links for one episode grouped by server and audio type, exactly as published by the site.
+      operationId: getDownloads
+      parameters:
+        - name: slug
+          in: query
+          required: true
+          description: Anime slug
+          schema:
+            type: string
+          example: one-piece-100
+        - name: ep
+          in: query
+          required: true
+          description: Episode number
+          schema:
+            type: string
+          example: '1'
+        - name: refresh
+          in: query
+          required: false
+          description: Bypass cache and force fresh scrape (1 to enable)
+          schema:
+            type: string
+            enum:
+              - '0'
+              - '1'
+          example: '1'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: slug, episode, totalDownloads, downloads[]
+        '400':
+          description: Invalid or missing parameters
+        '404':
+          description: Not found
+        '500':
+          description: Internal server error
+  /stream/proxy:
+    get:
+      tags:
+        - Watch
+      summary: Stream proxy (alias of /proxy)
+      description: Alias of /proxy for players configured with the original AniKotoAPI path.
+      operationId: streamProxy
+      parameters:
+        - name: url
+          in: query
+          required: true
+          description: Target URL
+          schema:
+            type: string
+        - name: referer
+          in: query
+          required: false
+          description: Referer to send
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: string
+                    description: Proxied media / rewritten playlist
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+  /stream/ts-proxy:
+    get:
+      tags:
+        - Watch
+      summary: Segment proxy (alias of /proxy)
+      description: Alias of /proxy for HLS segments, kept for compatibility with the original AniKotoAPI path.
+      operationId: streamTsProxy
+      parameters:
+        - name: url
+          in: query
+          required: true
+          description: Segment URL
+          schema:
+            type: string
+        - name: referer
+          in: query
+          required: false
+          description: Referer to send
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: string
+                    description: Proxied segment
+        '403':
+          description: Forbidden
+        '500':
+          description: Internal server error
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check
+      description: 'Liveness probe: status, version, uptime and memory. Never touches the upstream site.'
+      operationId: getHealth
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: status, version, uptime, memory, node, timestamp
+        '500':
+          description: Internal server error
+  /stats:
+    get:
+      tags:
+        - System
+      summary: Server statistics
+      description: Request counters, cache usage and feature flags (brotli, mirrors, proxies) for this instance.
+      operationId: getStats
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: requests, cache, endpoints, features
+        '500':
+          description: Internal server error
+  /cache/stats:
+    get:
+      tags:
+        - System
+      summary: Cache statistics
+      description: In-memory cache entry count, hits, misses and hit rate.
+      operationId: getCacheStats
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: keys, hits, misses, hitRate
+        '500':
+          description: Internal server error
+  /mirrors:
+    get:
+      tags:
+        - System
+      summary: Mirror status
+      description: Health, latency and current selection for every configured upstream mirror. Cached for 30 s.
+      operationId: getMirrors
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      description: name, url, status, latencyMs, isCurrent
+        '500':
+          description: Internal server error
+  /mirrors/reset:
+    post:
+      tags:
+        - System
+      summary: Reset mirror state
+      description: 'Clears mirror failure state so the primary mirror is tried first again. Requires `Authorization: Bearer <ADMIN_TOKEN>` when ADMIN_TOKEN is set.'
+      operationId: resetMirrors
+      parameters: []
+      responses:
+        '200':
+          description: Reset done
+        '401':
+          description: Unauthorized
+        '500':
+          description: Internal server error
+  /proxy/status:
+    get:
+      tags:
+        - System
+      summary: Outbound proxy status
+      description: Proxy pool health (credentials masked) and Cloudflare Worker configuration.
+      operationId: getProxyStatus
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    description: configured, total, healthy, proxies[], cloudflareWorker
+        '500':
+          description: Internal server error
+  /openapi:
+    get:
+      tags:
+        - System
+      summary: OpenAPI document
+      description: This API's OpenAPI 3.0 description as JSON. Returned as the raw document, not wrapped in { ok, data }.
+      operationId: getOpenApi
+      parameters: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+        '500':
+          description: Internal server error
 
 components:
   parameters:

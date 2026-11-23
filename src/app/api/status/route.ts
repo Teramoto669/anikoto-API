@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeListingPage } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -26,7 +27,7 @@ const STATUS_PATHS: Record<StatusType, string> = {
  * Example:
  *   /api/status?type=currently-airing&page=1
  */
-export async function GET(req: Request) {
+async function handler(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const type = (searchParams.get('type') ?? 'currently-airing') as StatusType;
@@ -57,3 +58,5 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

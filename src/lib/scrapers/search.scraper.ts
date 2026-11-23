@@ -168,7 +168,7 @@ export async function scrapeListingPage(
 
   const results = parseAnimeGrid(
     $,
-    '.film_list-wrap .flw-item, .ani.items .item, .items .item, .page-content .item',
+    '#list-items > .item, .film_list-wrap .flw-item, .ani.items .item, .items .item, .page-content .item',
     true
   );
 

@@ -1,3 +1,4 @@
+import { withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeListingPage } from '@/lib/scrapers/search.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -23,7 +24,7 @@ const VALID_TYPES = ['tv', 'movie', 'ova', 'ona', 'special', 'music'];
  *   /api/type/movie
  *   /api/type/tv?page=3
  */
-export async function GET(
+async function handler(
   req: Request,
   { params }: { params: Promise<{ type: string }> }
 ) {
@@ -57,3 +58,5 @@ export async function GET(
     return NextResponse.json({ ok: false, message }, { status: 500 });
   }
 }
+
+export const GET = withApi(handler);

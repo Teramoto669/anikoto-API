@@ -185,6 +185,20 @@ Add `?refresh=1` to force a fresh scrape.
 
 ---
 
+## 🚦 Error Responses
+
+Every endpoint returns `{ "ok": false, "message": "..." }` with a consistent status code:
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Invalid or missing parameter |
+| `403` | Blocked by the SSRF guard or domain allow-list (proxy / qualities) |
+| `404` | Not found on the upstream site |
+| `502` | Upstream unreachable or rejected the request |
+| `500` | Unexpected internal error |
+
+---
+
 ## ⚙️ Environment Variables
 
 Configure environment variables in a `.env` file at the root directory:
@@ -218,6 +232,9 @@ ADMIN_TOKEN=change-me
 
 # Optional: default Referer for /api/stream/qualities when none is given
 STREAM_PROXY_REFERER=https://megaplay.buzz/
+
+# Optional: AniList GraphQL endpoint used by /api/anilist* (default: https://graphql.anilist.co)
+ANILIST_URL=https://graphql.anilist.co
 ```
 
 ### 🗜️ Compression (Brotli → gzip)

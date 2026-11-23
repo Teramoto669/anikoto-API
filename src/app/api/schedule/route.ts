@@ -16,23 +16,17 @@ export const dynamic = 'force-dynamic';
  *   refresh=1  – bypass cache
  */
 async function handler(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const refresh = searchParams.get('refresh') === '1';
-    const tz = validateTimezone(searchParams.get('tz'), 0);
-    const images = searchParams.get('images') === 'true';
+  const { searchParams } = new URL(req.url);
+  const refresh = searchParams.get('refresh') === '1';
+  const tz = validateTimezone(searchParams.get('tz'), 0);
+  const images = searchParams.get('images') === 'true';
 
-    const key = `schedule:tz${tz}:img:${images}`;
-    const data = refresh
-      ? await scrapeSchedule(tz, undefined, images)
-      : await getOrSet(key, () => scrapeSchedule(tz, undefined, images), CACHE_TTL.SCHEDULE);
+  const key = `schedule:tz${tz}:img:${images}`;
+  const data = refresh
+    ? await scrapeSchedule(tz, undefined, images)
+    : await getOrSet(key, () => scrapeSchedule(tz, undefined, images), CACHE_TTL.SCHEDULE);
 
-    return NextResponse.json({ ok: true, data });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/schedule]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
-  }
+  return NextResponse.json({ ok: true, data });
 }
 
 export const GET = withApi(handler);

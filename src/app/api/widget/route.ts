@@ -23,24 +23,18 @@ export const dynamic = 'force-dynamic';
  *   /api/widget?name=trending
  */
 async function handler(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const rawName = searchParams.get('name')?.trim() || searchParams.get('type')?.trim() || 'updated-all';
-    const name = validateWidgetName(rawName) || 'updated-all';
-    const page = validatePage(searchParams.get('page'));
-    const refresh = searchParams.get('refresh') === '1';
+  const { searchParams } = new URL(req.url);
+  const rawName = searchParams.get('name')?.trim() || searchParams.get('type')?.trim() || 'updated-all';
+  const name = validateWidgetName(rawName) || 'updated-all';
+  const page = validatePage(searchParams.get('page'));
+  const refresh = searchParams.get('refresh') === '1';
 
-    const key = `widget:${name}:${page}`;
-    const data = refresh
-      ? await scrapeHomeWidget(name, page)
-      : await getOrSet(key, () => scrapeHomeWidget(name, page), CACHE_TTL.HOME);
+  const key = `widget:${name}:${page}`;
+  const data = refresh
+    ? await scrapeHomeWidget(name, page)
+    : await getOrSet(key, () => scrapeHomeWidget(name, page), CACHE_TTL.HOME);
 
-    return NextResponse.json({ ok: true, data });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/widget]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
-  }
+  return NextResponse.json({ ok: true, data });
 }
 
 export const GET = withApi(handler);

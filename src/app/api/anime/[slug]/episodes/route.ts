@@ -20,49 +20,43 @@ async function handler(
   req: Request,
   { params }: { params: Promise<{ slug: string }> }
 ) {
-  try {
-    const rawParams = await params;
-    const slug = validateSlug(rawParams?.slug);
-    if (!slug) {
-      return NextResponse.json({ ok: false, message: 'Invalid or missing slug parameter' }, { status: 400 });
-    }
-
-    const { searchParams } = new URL(req.url);
-    const refresh = searchParams.get('refresh') === '1';
-
-    // Handle episode range parameters
-    const start = searchParams.get('start');
-    const end = searchParams.get('end');
-    
-    let startEpisode: number | undefined = undefined;
-    let endEpisode: number | undefined = undefined;
-    let cacheKey = `anime:episodes:${slug}`;
-
-    if (start && end) {
-      const s = parseInt(start, 10);
-      const e = parseInt(end, 10);
-      if (!isNaN(s) && !isNaN(e) && s > 0 && e > 0 && s <= e) {
-        startEpisode = s;
-        endEpisode = e;
-        cacheKey += `:${s}-${e}`;
-      } else {
-        return NextResponse.json({ ok: false, message: 'Invalid episode range. Start and End must be positive integers, and Start <= End.' }, { status: 400 });
-      }
-    }
-
-    const data = await getOrSet(
-      cacheKey,
-      () => scrapeAnimeEpisodes(slug, startEpisode, endEpisode, refresh),
-      CACHE_TTL.EPISODE,
-      refresh
-    );
-
-    return NextResponse.json({ ok: true, data });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/anime/[slug]/episodes]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
+  const rawParams = await params;
+  const slug = validateSlug(rawParams?.slug);
+  if (!slug) {
+    return NextResponse.json({ ok: false, message: 'Invalid or missing slug parameter' }, { status: 400 });
   }
+
+  const { searchParams } = new URL(req.url);
+  const refresh = searchParams.get('refresh') === '1';
+
+  // Handle episode range parameters
+  const start = searchParams.get('start');
+  const end = searchParams.get('end');
+  
+  let startEpisode: number | undefined = undefined;
+  let endEpisode: number | undefined = undefined;
+  let cacheKey = `anime:episodes:${slug}`;
+
+  if (start && end) {
+    const s = parseInt(start, 10);
+    const e = parseInt(end, 10);
+    if (!isNaN(s) && !isNaN(e) && s > 0 && e > 0 && s <= e) {
+      startEpisode = s;
+      endEpisode = e;
+      cacheKey += `:${s}-${e}`;
+    } else {
+      return NextResponse.json({ ok: false, message: 'Invalid episode range. Start and End must be positive integers, and Start <= End.' }, { status: 400 });
+    }
+  }
+
+  const data = await getOrSet(
+    cacheKey,
+    () => scrapeAnimeEpisodes(slug, startEpisode, endEpisode, refresh),
+    CACHE_TTL.EPISODE,
+    refresh
+  );
+
+  return NextResponse.json({ ok: true, data });
 }
 
 export const GET = withApi(handler);

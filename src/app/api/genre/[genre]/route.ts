@@ -26,33 +26,27 @@ async function handler(
   req: Request,
   { params }: { params: Promise<{ genre: string }> }
 ) {
-  try {
-    const rawParams = await params;
-    const genre = validateGenre(rawParams?.genre);
-    if (!genre) {
-      return NextResponse.json({ ok: false, message: 'Invalid or missing genre parameter' }, { status: 400 });
-    }
-
-    const { searchParams } = new URL(req.url);
-    const page = validatePage(searchParams.get('page'));
-    const refresh = searchParams.get('refresh') === '1';
-
-    const key = `genre:${genre}:${page}`;
-    const path = `/genre/${genre}`;
-
-    const data = await getOrSet(
-      key,
-      () => scrapeListingPage(path, page, refresh),
-      CACHE_TTL.FILTER,
-      refresh
-    );
-
-    return NextResponse.json({ ok: true, data: { ...data, genre } });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/genre/[genre]]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
+  const rawParams = await params;
+  const genre = validateGenre(rawParams?.genre);
+  if (!genre) {
+    return NextResponse.json({ ok: false, message: 'Invalid or missing genre parameter' }, { status: 400 });
   }
+
+  const { searchParams } = new URL(req.url);
+  const page = validatePage(searchParams.get('page'));
+  const refresh = searchParams.get('refresh') === '1';
+
+  const key = `genre:${genre}:${page}`;
+  const path = `/genre/${genre}`;
+
+  const data = await getOrSet(
+    key,
+    () => scrapeListingPage(path, page, refresh),
+    CACHE_TTL.FILTER,
+    refresh
+  );
+
+  return NextResponse.json({ ok: true, data: { ...data, genre } });
 }
 
 export const GET = withApi(handler);

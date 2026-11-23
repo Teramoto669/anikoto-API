@@ -28,35 +28,29 @@ async function handler(
   req: Request,
   { params }: { params: Promise<{ type: string }> }
 ) {
-  try {
-    const { type } = await params;
-    if (!type || !VALID_TYPES.includes(type.toLowerCase())) {
-      return NextResponse.json(
-        { ok: false, message: `type must be one of: ${VALID_TYPES.join(', ')}` },
-        { status: 400 }
-      );
-    }
-
-    const { searchParams } = new URL(req.url);
-    const page = validatePage(searchParams.get('page'));
-    const refresh = searchParams.get('refresh') === '1';
-
-    const key = `type:${type}:${page}`;
-    const path = `/type/${type.toLowerCase()}`;
-
-    const data = await getOrSet(
-      key,
-      () => scrapeListingPage(path, page, refresh),
-      CACHE_TTL.FILTER,
-      refresh
+  const { type } = await params;
+  if (!type || !VALID_TYPES.includes(type.toLowerCase())) {
+    return NextResponse.json(
+      { ok: false, message: `type must be one of: ${VALID_TYPES.join(', ')}` },
+      { status: 400 }
     );
-
-    return NextResponse.json({ ok: true, data: { ...data, mediaType: type } });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/type/[type]]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
   }
+
+  const { searchParams } = new URL(req.url);
+  const page = validatePage(searchParams.get('page'));
+  const refresh = searchParams.get('refresh') === '1';
+
+  const key = `type:${type}:${page}`;
+  const path = `/type/${type.toLowerCase()}`;
+
+  const data = await getOrSet(
+    key,
+    () => scrapeListingPage(path, page, refresh),
+    CACHE_TTL.FILTER,
+    refresh
+  );
+
+  return NextResponse.json({ ok: true, data: { ...data, mediaType: type } });
 }
 
 export const GET = withApi(handler);

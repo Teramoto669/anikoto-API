@@ -19,24 +19,18 @@ export const revalidate = 0;
  * @query refresh=1  Bypass cache and force re-scrape
  */
 async function handler(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const refresh = searchParams.get('refresh') === '1';
+  const { searchParams } = new URL(req.url);
+  const refresh = searchParams.get('refresh') === '1';
 
-    const key = 'home';
-    const data = await getOrSet(
-      key,
-      () => scrapeHome(refresh),
-      CACHE_TTL.HOME,
-      refresh
-    );
+  const key = 'home';
+  const data = await getOrSet(
+    key,
+    () => scrapeHome(refresh),
+    CACHE_TTL.HOME,
+    refresh
+  );
 
-    return NextResponse.json({ ok: true, data });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/home]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
-  }
+  return NextResponse.json({ ok: true, data });
 }
 
 export const GET = withApi(handler);

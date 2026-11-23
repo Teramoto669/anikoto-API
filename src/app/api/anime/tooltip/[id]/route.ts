@@ -19,36 +19,25 @@ async function handler(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try {
-    const rawParams = await params;
-    const id = validateId(rawParams?.id);
-    if (!id) {
-      return NextResponse.json({ ok: false, message: 'Invalid or missing numeric id parameter' }, { status: 400 });
-    }
-
-    const { searchParams } = new URL(req.url);
-    const refresh = searchParams.get('refresh') === '1';
-
-    const key = `anime:tooltip:${id}`;
-
-    const data = await getOrSet(
-      key,
-      () => scrapeAnimeTooltip(id),
-      CACHE_TTL.ANIME,
-      refresh
-    );
-
-    return NextResponse.json({ ok: true, data });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/anime/tooltip/[id]]', message);
-
-    if (message === 'Anime tooltip not found') {
-      return NextResponse.json({ ok: false, message }, { status: 404 });
-    }
-
-    return NextResponse.json({ ok: false, message }, { status: 500 });
+  const rawParams = await params;
+  const id = validateId(rawParams?.id);
+  if (!id) {
+    return NextResponse.json({ ok: false, message: 'Invalid or missing numeric id parameter' }, { status: 400 });
   }
+
+  const { searchParams } = new URL(req.url);
+  const refresh = searchParams.get('refresh') === '1';
+
+  const key = `anime:tooltip:${id}`;
+
+  const data = await getOrSet(
+    key,
+    () => scrapeAnimeTooltip(id),
+    CACHE_TTL.ANIME,
+    refresh
+  );
+
+  return NextResponse.json({ ok: true, data });
 }
 
 export const GET = withApi(handler);

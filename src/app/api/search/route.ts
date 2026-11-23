@@ -20,33 +20,27 @@ export const dynamic = 'force-dynamic';
  *   /api/search?keyword=one+piece
  */
 async function handler(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const keyword = validateKeyword(searchParams.get('keyword'));
-    const refresh = searchParams.get('refresh') === '1';
-    const page = validatePage(searchParams.get('page'));
+  const { searchParams } = new URL(req.url);
+  const keyword = validateKeyword(searchParams.get('keyword'));
+  const refresh = searchParams.get('refresh') === '1';
+  const page = validatePage(searchParams.get('page'));
 
-    if (!keyword) {
-      return NextResponse.json(
-        { ok: false, message: 'Invalid or missing keyword query parameter' },
-        { status: 400 }
-      );
-    }
-
-    const key = `search:${keyword.toLowerCase()}:page:${page}`;
-    const data = await getOrSet(
-      key,
-      () => scrapeSearch(keyword, page, refresh),
-      CACHE_TTL.SEARCH,
-      refresh
+  if (!keyword) {
+    return NextResponse.json(
+      { ok: false, message: 'Invalid or missing keyword query parameter' },
+      { status: 400 }
     );
-
-    return NextResponse.json({ ok: true, data });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/search]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
   }
+
+  const key = `search:${keyword.toLowerCase()}:page:${page}`;
+  const data = await getOrSet(
+    key,
+    () => scrapeSearch(keyword, page, refresh),
+    CACHE_TTL.SEARCH,
+    refresh
+  );
+
+  return NextResponse.json({ ok: true, data });
 }
 
 export const GET = withApi(handler);

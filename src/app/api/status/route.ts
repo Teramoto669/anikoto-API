@@ -28,35 +28,29 @@ const STATUS_PATHS: Record<StatusType, string> = {
  *   /api/status?type=currently-airing&page=1
  */
 async function handler(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
-    const type = (searchParams.get('type') ?? 'currently-airing') as StatusType;
-    const page = validatePage(searchParams.get('page'));
-    const refresh = searchParams.get('refresh') === '1';
+  const { searchParams } = new URL(req.url);
+  const type = (searchParams.get('type') ?? 'currently-airing') as StatusType;
+  const page = validatePage(searchParams.get('page'));
+  const refresh = searchParams.get('refresh') === '1';
 
-    if (!STATUS_PATHS[type]) {
-      return NextResponse.json(
-        { ok: false, message: `type must be one of: ${Object.keys(STATUS_PATHS).join(', ')}` },
-        { status: 400 }
-      );
-    }
-
-    const key = `status:${type}:${page}`;
-    const path = STATUS_PATHS[type];
-
-    const data = await getOrSet(
-      key,
-      () => scrapeListingPage(path, page, refresh),
-      CACHE_TTL.FILTER,
-      refresh
+  if (!STATUS_PATHS[type]) {
+    return NextResponse.json(
+      { ok: false, message: `type must be one of: ${Object.keys(STATUS_PATHS).join(', ')}` },
+      { status: 400 }
     );
-
-    return NextResponse.json({ ok: true, data });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/status]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
   }
+
+  const key = `status:${type}:${page}`;
+  const path = STATUS_PATHS[type];
+
+  const data = await getOrSet(
+    key,
+    () => scrapeListingPage(path, page, refresh),
+    CACHE_TTL.FILTER,
+    refresh
+  );
+
+  return NextResponse.json({ ok: true, data });
 }
 
 export const GET = withApi(handler);

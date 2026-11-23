@@ -27,59 +27,53 @@ export const dynamic = 'force-dynamic';
  *   /api/filter?genre[]=action&genre[]=romance&year[]=2026&sort=score
  */
 async function handler(req: Request) {
-  try {
-    const { searchParams } = new URL(req.url);
+  const { searchParams } = new URL(req.url);
 
-    const rawKeyword = searchParams.get('keyword');
-    const keyword = rawKeyword ? (validateKeyword(rawKeyword) ?? undefined) : undefined;
-    const page = String(validatePage(searchParams.get('page')));
+  const rawKeyword = searchParams.get('keyword');
+  const keyword = rawKeyword ? (validateKeyword(rawKeyword) ?? undefined) : undefined;
+  const page = String(validatePage(searchParams.get('page')));
 
-    const params: FilterParams = {
-      keyword,
-      genre: searchParams.getAll('genre[]'),
-      season: searchParams.getAll('season[]'),
-      year: searchParams.getAll('year[]'),
-      type: [...searchParams.getAll('type[]'), ...searchParams.getAll('term_type[]')],
-      status: searchParams.getAll('status[]'),
-      language: searchParams.getAll('language[]'),
-      rating: searchParams.getAll('rating[]'),
-      sort: searchParams.get('sort') ?? undefined,
-      page,
-    };
+  const params: FilterParams = {
+    keyword,
+    genre: searchParams.getAll('genre[]'),
+    season: searchParams.getAll('season[]'),
+    year: searchParams.getAll('year[]'),
+    type: [...searchParams.getAll('type[]'), ...searchParams.getAll('term_type[]')],
+    status: searchParams.getAll('status[]'),
+    language: searchParams.getAll('language[]'),
+    rating: searchParams.getAll('rating[]'),
+    sort: searchParams.get('sort') ?? undefined,
+    page,
+  };
 
-    // Remove empty arrays
-    (Object.keys(params) as (keyof FilterParams)[]).forEach((k) => {
-      const val = params[k];
-      if (Array.isArray(val) && val.length === 0) {
-        delete params[k];
-      }
-    });
+  // Remove empty arrays
+  (Object.keys(params) as (keyof FilterParams)[]).forEach((k) => {
+    const val = params[k];
+    if (Array.isArray(val) && val.length === 0) {
+      delete params[k];
+    }
+  });
 
-    const cacheKey = `filter:${JSON.stringify(params)}`;
-    const refresh = searchParams.get('refresh') === '1';
+  const cacheKey = `filter:${JSON.stringify(params)}`;
+  const refresh = searchParams.get('refresh') === '1';
 
-    const data = await getOrSet(
-      cacheKey,
-      () => scrapeFilter(params, refresh),
-      CACHE_TTL.FILTER,
-      refresh
-    );
+  const data = await getOrSet(
+    cacheKey,
+    () => scrapeFilter(params, refresh),
+    CACHE_TTL.FILTER,
+    refresh
+  );
 
-    data.options = FILTER_OPTIONS;
+  data.options = FILTER_OPTIONS;
 
-    return NextResponse.json(
-      { ok: true, data },
-      {
-        headers: refresh
-          ? { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' }
-          : undefined,
-      }
-    );
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('[GET /api/filter]', message);
-    return NextResponse.json({ ok: false, message }, { status: 500 });
-  }
+  return NextResponse.json(
+    { ok: true, data },
+    {
+      headers: refresh
+        ? { 'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate' }
+        : undefined,
+    }
+  );
 }
 
 export const GET = withApi(handler);

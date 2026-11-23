@@ -1,13 +1,27 @@
 /**
  * AniList GraphQL helpers (metadata enrichment, seasonal charts, MAL → AniList id mapping).
- * Talks only to https://graphql.anilist.co.
+ * Talks only to the AniList GraphQL endpoint: `ANILIST_URL` (default https://graphql.anilist.co).
  */
 import axios from 'axios';
 import { ApiError } from './api';
 import { getOrSet } from './cache';
 import { CACHE_TTL } from './constants';
 
-const ANILIST_GRAPHQL = 'https://graphql.anilist.co';
+const DEFAULT_ANILIST_URL = 'https://graphql.anilist.co';
+
+/** GraphQL endpoint, overridable with ANILIST_URL (http/https only; invalid values fall back to the default). */
+export function getAnilistUrl(): string {
+  const raw = (process.env.ANILIST_URL ?? '').trim();
+  if (!raw) return DEFAULT_ANILIST_URL;
+  try {
+    const u = new URL(raw);
+    if (u.protocol === 'http:' || u.protocol === 'https:') return u.toString();
+  } catch {
+    /* fall through */
+  }
+  console.warn('[anilist] ANILIST_URL is not a valid http(s) URL; using the default');
+  return DEFAULT_ANILIST_URL;
+}
 
 export const ANILIST_SEASONS = ['WINTER', 'SPRING', 'SUMMER', 'FALL'] as const;
 export type AnilistSeason = (typeof ANILIST_SEASONS)[number];
@@ -60,7 +74,7 @@ async function anilistQuery<T>(
     let body: GraphQlResponse<T>;
     try {
       const res = await axios.post<GraphQlResponse<T>>(
-        ANILIST_GRAPHQL,
+        getAnilistUrl(),
         { query, variables },
         {
           headers: { 'Content-Type': 'application/json', Accept: 'application/json' },

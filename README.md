@@ -1,29 +1,50 @@
 <div align="center">
-  <img src="public/logo-banner.png" alt="Anikoto" width="480">
+  <img src="public/logo-banner.png" alt="Anikoto API" width="560">
 
-  <h1>Anikoto API</h1>
-  
-  <p><strong>A high-performance REST API for scraping anime data from anikoto.net, built with Next.js 16</strong></p>
+  <p><strong>⚡ A high-performance REST API for scraping anime data from anikoto.net — built with Next.js 16 ⚡</strong></p>
 
   <p>
     <a href="https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FTeramoto669%2Fanikoto-scrap-api"><img src="https://vercel.com/button" alt="Deploy with Vercel"></a>
-    <img src="https://img.shields.io/badge/Next.js-16-black?style=flat&logo=next.js" alt="Next.js 16">
-    <img src="https://img.shields.io/badge/TypeScript-5.0-blue?style=flat&logo=typescript" alt="TypeScript">
-    <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License MIT">
   </p>
 
-  <p>Author: <strong>Teramoto</strong></p>
+  <p>
+    <img src="https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=nextdotjs&logoColor=white" alt="Next.js 16">
+    <img src="https://img.shields.io/badge/React-19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19">
+    <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript 5">
+    <img src="https://img.shields.io/badge/Node.js-20%2B-339933?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 20+">
+  </p>
 
   <p>
-    <a href="#-features">Features</a> • 
-    <a href="#-getting-started">Quick Start</a> • 
-    <a href="#-api-overview">API Endpoints</a> • 
-    <a href="#%EF%B8%8F-project-structure">Project Structure</a> • 
-    <a href="#%E2%98%81%EF%B8%8F-cloudflare-worker-proxy-optional">Deployment</a>
+    <img src="https://img.shields.io/badge/endpoints-53-1fb6f5?style=flat-square&logo=databricks&logoColor=white" alt="53 endpoints">
+    <img src="https://img.shields.io/badge/OpenAPI-3.0-6BA539?style=flat-square&logo=openapiinitiative&logoColor=white" alt="OpenAPI 3.0">
+    <img src="https://img.shields.io/badge/compression-Brotli%20%E2%86%92%20gzip-f59e0b?style=flat-square&logo=speedtest&logoColor=white" alt="Brotli with gzip fallback">
+    <img src="https://img.shields.io/badge/cache-node--cache-8b5cf6?style=flat-square&logo=redis&logoColor=white" alt="In-memory cache">
+    <img src="https://img.shields.io/badge/scraping-Cheerio-e8742a?style=flat-square&logo=cheerio&logoColor=white" alt="Cheerio">
+    <img src="https://img.shields.io/badge/Cloudflare-Worker%20proxy-F38020?style=flat-square&logo=cloudflare&logoColor=white" alt="Cloudflare Worker proxy">
+  </p>
+
+  <p>
+    <a href="https://github.com/Teramoto669/anikoto-scrap-api/stargazers"><img src="https://img.shields.io/github/stars/Teramoto669/anikoto-scrap-api?style=flat-square&logo=github&color=facc15" alt="GitHub stars"></a>
+    <a href="https://github.com/Teramoto669/anikoto-scrap-api/network/members"><img src="https://img.shields.io/github/forks/Teramoto669/anikoto-scrap-api?style=flat-square&logo=github" alt="GitHub forks"></a>
+    <a href="https://github.com/Teramoto669/anikoto-scrap-api/issues"><img src="https://img.shields.io/github/issues/Teramoto669/anikoto-scrap-api?style=flat-square&logo=github" alt="GitHub issues"></a>
+    <a href="https://github.com/Teramoto669/anikoto-scrap-api/commits"><img src="https://img.shields.io/github/last-commit/Teramoto669/anikoto-scrap-api?style=flat-square&logo=git&logoColor=white" alt="Last commit"></a>
+    <img src="https://img.shields.io/badge/License-MIT-22c55e?style=flat-square" alt="License MIT">
+    <img src="https://img.shields.io/badge/PRs-welcome-ff69b4?style=flat-square" alt="PRs welcome">
+  </p>
+
+  <p>👤 Author: <strong>Teramoto</strong></p>
+
+  <p>
+    <a href="#-features">✨ Features</a> •
+    <a href="#-getting-started">🚀 Quick Start</a> •
+    <a href="#-api-overview">📖 API Endpoints</a> •
+    <a href="#%EF%B8%8F-environment-variables">⚙️ Configuration</a> •
+    <a href="#%EF%B8%8F-project-structure">🗂️ Project Structure</a> •
+    <a href="#%EF%B8%8F-cloudflare-worker-proxy-optional">☁️ Deployment</a>
   </p>
 </div>
 
-> **For educational purposes only.** This project is not affiliated with anikoto.net.
+> 🎓 **For educational purposes only.** This project is not affiliated with anikoto.net.
 
 > [!IMPORTANT]
 >
@@ -35,12 +56,15 @@
 
 ## ✨ Features
 
-- 15 REST endpoints covering home, search, filter, anime detail, episodes, related, recommendations, tooltip, schedule, streaming sources (with opening/ending skip ranges), and a streaming proxy
-- **High-Volume Proxy Engine**: Zero-copy `ReadableStream` video proxying, multi-node outbound proxy pool routing (`PROXIES` / `PROXY_LIST`), SSRF protection, anti-bot browser header rotation, and exponential backoff retries.
-- Response envelope — every response is `{ ok: true, data: ... }` or `{ ok: false, message: "..." }`
-- In-memory cache (TTL per endpoint) — add `?refresh=1` to any request to bypass
-- Interactive **Swagger UI** docs at `/` powered by an OpenAPI 3.0 spec (`public/openapi.yaml`)
-- TypeScript — fully typed responses via `src/lib/types.ts`
+- 🧩 **53 REST endpoints** — home, search, filter, anime detail, episodes, seasons, related, recommendations, tooltip, schedule, A–Z, rankings, AniList lookups, streaming sources (with opening/ending skip ranges), downloads and a streaming proxy
+- 🚀 **High-volume proxy engine** — zero-copy `ReadableStream` video proxying, multi-node outbound proxy pool (`PROXIES` / `PROXY_LIST`), SSRF protection, anti-bot browser header rotation and exponential-backoff retries
+- 🗜️ **Optional Brotli → gzip compression** — opt in with `ENABLE_BROTLI=true`; negotiates `Accept-Encoding`, never touches SSE or the media proxy
+- 🪞 **Mirror failover** — optional `MIRROR_DOMAINS` with health tracking and cool-downs, so one dead domain doesn't take the API down
+- 📦 **Consistent response envelope** — every response is `{ ok: true, data: ... }` or `{ ok: false, message: "..." }`
+- ⚡ **In-memory cache** with per-endpoint TTLs — add `?refresh=1` to any request to bypass it
+- 📚 **Interactive API docs** at `/` powered by an OpenAPI 3.0 spec (`public/openapi.yaml`, also served as JSON at `/api/openapi`)
+- 🩺 **Observability** — `/api/health`, `/api/stats`, `/api/cache/stats`, `/api/mirrors`, `/api/proxy/status`
+- 🔷 **TypeScript** — fully typed responses via `src/lib/types.ts`
 
 ---
 
@@ -59,6 +83,8 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 ---
 
 ## 📖 API Overview
+
+### 🏠 Core
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -79,7 +105,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 | GET | `/api/watch/:slug?ep=` | Streaming sources (m3u8, subtitles, and opening/ending skip ranges) |
 | GET | `/api/proxy?url=` | High-volume streaming proxy (CORS bypass, zero-copy streaming, proxy routing) |
 
-### Discovery & lists
+### 🔭 Discovery & lists
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -99,7 +125,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 | GET | `/api/search/suggest?keyword=` | Autocomplete suggestions (max 10) |
 | GET | `/api/suggestions?keyword=` | Rich suggestions as full cards (max 10) |
 
-### Anime extras & AniList
+### 🎌 Anime extras & AniList
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -110,7 +136,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 | GET | `/api/anilist/:id` | AniList metadata (path form) |
 | GET | `/api/anilist/season?season=&year=&page=&perPage=` | Seasonal chart from AniList |
 
-### Streaming building blocks
+### 🎬 Streaming building blocks
 
 `/api/watch/:slug` runs the whole pipeline for you; these expose the individual steps.
 
@@ -125,7 +151,7 @@ Open [http://localhost:3000](http://localhost:3000) to see the interactive API d
 | GET | `/api/download?slug=&ep=` | Episode download links |
 | GET | `/api/stream/proxy`, `/api/stream/ts-proxy` | Aliases of `/api/proxy` (original AniKotoAPI paths) |
 
-### System
+### 🩺 System
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -156,8 +182,6 @@ Add `?refresh=1` to force a fresh scrape.
 
 > [!TIP]
 > **Schedule Images:** By default, `/api/schedule` returns an empty string for anime images to keep response times fast (fetching schedule images requires visiting each anime details page). Setting `images=true` will concurrently fetch the poster images for all listed anime with a global concurrency limit of 5.
-
----
 
 ---
 
@@ -243,7 +267,7 @@ By default, the API provides an internal streaming proxy at `/api/proxy` to bypa
 src/
 ├── proxy.ts              # CORS & proxy middleware (Next.js 16)
 ├── app/
-│   ├── page.tsx          # Swagger UI documentation page
+│   ├── page.tsx          # Interactive API documentation page
 │   ├── layout.tsx        # Root layout
 │   └── api/              # API route handlers
 │       ├── home/         # GET /api/home
@@ -283,21 +307,31 @@ src/
 │       ├── tooltip.scraper.ts
 │       └── watch.scraper.ts
 public/
-└── openapi.yaml          # OpenAPI 3.0 specification
+├── openapi.yaml          # OpenAPI 3.0 specification
+├── logo.png              # Anikoto wordmark (docs sidebar)
+├── logo-banner.png       # README banner
+└── favicon.png           # Icon (also src/app/icon.png & favicon.ico)
 ```
 
 ---
 
-## 🛠️ Tech Stack
+## 🧰 Tech Stack
 
 - [Next.js 16](https://nextjs.org) — App Router
 - [Cheerio](https://cheerio.js.org) — server-side HTML parsing
 - [Axios](https://axios-http.com) — HTTP client
 - [Node-Cache](https://www.npmjs.com/package/node-cache) — in-memory caching
-- [Swagger UI](https://swagger.io/tools/swagger-ui/) — interactive API docs
+- [OpenAPI 3.0](https://spec.openapis.org/oas/v3.0.3) — machine-readable spec behind the interactive docs page
+- [Brotli / gzip](https://nodejs.org/api/zlib.html) — optional response compression (Node `zlib`)
 
 ---
 
 ## 👤 Author
 
-**Teramoto** · [github.com/Teramoto669](https://github.com/Teramoto669)
+<div align="center">
+
+**Made with ❤️ by Teramoto** · [github.com/Teramoto669](https://github.com/Teramoto669)
+
+⭐ If this project helps you, consider giving it a star!
+
+</div>

@@ -3,6 +3,7 @@
 
 import spec from "@/lib/openapi-spec";
 import React, { useState } from "react";
+import Image from "next/image";
 
 // Tag colours
 const TAG_COLORS: Record<string, string> = {
@@ -138,7 +139,10 @@ export default function DocsPage() {
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-badge">REST API · v1.0</div>
-          <h1 className="sidebar-title">Anikoto Scraper</h1>
+          <h1 className="sidebar-title">
+            <Image src="/logo.png" alt="" width={753} height={234} priority className="sidebar-logo" />
+            <span className="sr-only">Anikoto Scraper</span>
+          </h1>
           <p className="sidebar-sub">anikoto.net · Next.js · Cheerio</p>
         </div>
 
@@ -419,6 +423,11 @@ const CSS = `
     color: #a5b4fc;
     margin-bottom: 10px;
   }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  }
+  .sidebar-logo { display: block; width: 168px; height: auto; margin: 2px 0 4px; }
   .sidebar-title {
     font-size: 16px;
     font-weight: 700;

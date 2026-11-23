@@ -1,4 +1,6 @@
 <div align="center">
+  <img src="public/logo-banner.png" alt="Anikoto" width="480">
+
   <h1>Anikoto API</h1>
   
   <p><strong>A high-performance REST API for scraping anime data from anikoto.net, built with Next.js 16</strong></p>

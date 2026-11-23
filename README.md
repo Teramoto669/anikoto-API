@@ -330,7 +330,7 @@ public/
 
 <div align="center">
 
-**Made with ❤️ by Teramoto** · [github.com/Teramoto669](https://github.com/Teramoto669)
+**Made by Teramoto** · [github.com/Teramoto669](https://github.com/Teramoto669)
 
 ⭐ If this project helps you, consider giving it a star!
 

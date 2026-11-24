@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import type { AnyNode } from 'domhandler';
+import { ApiError } from '../api';
 import { fetchPage } from '../fetcher';
 import { AnimeTooltip, EpisodeStatus } from '../types';
 
@@ -21,7 +22,7 @@ export async function scrapeAnimeTooltip(id: string): Promise<AnimeTooltip> {
 
   const title = $('.title').text().trim();
   if (!title) {
-    throw new Error('Anime tooltip not found');
+    throw new ApiError(404, 'Anime tooltip not found');
   }
 
   const titleJp = $('.title').attr('data-jp')?.trim() || undefined;

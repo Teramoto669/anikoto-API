@@ -1,4 +1,4 @@
-import { ok, withApi } from '@/lib/api';
+import { ok, wantsRefresh, withApi } from '@/lib/api';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
 import { getTrending } from '@/lib/scrapers/discovery.scraper';
@@ -18,11 +18,14 @@ export const dynamic = 'force-dynamic';
 async function handler(req: Request) {
   const { searchParams } = new URL(req.url);
   const page = validatePage(searchParams.get('page'));
-  const refresh = searchParams.get('refresh') === '1';
+  const refresh = wantsRefresh(req);
 
-  const data = refresh
-    ? await getTrending(page)
-    : await getOrSet(`widget:trending:${page}`, () => getTrending(page), CACHE_TTL.HOME);
+  const data = await getOrSet(
+    `widget:trending:${page}`,
+    () => getTrending(page, refresh),
+    CACHE_TTL.HOME,
+    refresh
+  );
   return ok(data);
 }
 

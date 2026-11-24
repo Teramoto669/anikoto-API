@@ -14,6 +14,7 @@
  */
 import axios from 'axios';
 import { BASE_URL, DEFAULT_HEADERS } from './constants';
+import { proxyPool } from './proxy-pool';
 
 export interface Mirror {
   name: string;
@@ -137,6 +138,8 @@ export async function getMirrorStatus(): Promise<MirrorStatus[]> {
       const started = Date.now();
       let httpStatus: number | null = null;
       let online = false;
+      const proxyUrl = proxyPool.getNextProxy();
+      const httpsAgent = proxyUrl ? proxyPool.getAgent(proxyUrl) : undefined;
       try {
         const res = await axios.get(`${m.url}/home`, {
           headers: DEFAULT_HEADERS,
@@ -147,10 +150,16 @@ export async function getMirrorStatus(): Promise<MirrorStatus[]> {
           responseType: 'text',
           // Don't download megabytes just to probe.
           maxContentLength: 2_000_000,
+          ...(httpsAgent ? { httpsAgent, httpAgent: httpsAgent } : {}),
         });
         httpStatus = res.status;
         online = res.status >= 200 && res.status < 400;
+        if (proxyUrl) {
+          if (online) proxyPool.reportSuccess(proxyUrl);
+          else proxyPool.reportFailure(proxyUrl);
+        }
       } catch {
+        if (proxyUrl) proxyPool.reportFailure(proxyUrl);
         online = false;
       }
       return {

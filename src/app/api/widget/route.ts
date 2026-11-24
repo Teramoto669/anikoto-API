@@ -1,4 +1,4 @@
-import { withApi } from '@/lib/api';
+import { wantsRefresh, withApi } from '@/lib/api';
 import { NextResponse } from 'next/server';
 import { scrapeHomeWidget } from '@/lib/scrapers/home.scraper';
 import { getOrSet } from '@/lib/cache';
@@ -27,12 +27,15 @@ async function handler(req: Request) {
   const rawName = searchParams.get('name')?.trim() || searchParams.get('type')?.trim() || 'updated-all';
   const name = validateWidgetName(rawName) || 'updated-all';
   const page = validatePage(searchParams.get('page'));
-  const refresh = searchParams.get('refresh') === '1';
+  const refresh = wantsRefresh(req);
 
   const key = `widget:${name}:${page}`;
-  const data = refresh
-    ? await scrapeHomeWidget(name, page)
-    : await getOrSet(key, () => scrapeHomeWidget(name, page), CACHE_TTL.HOME);
+  const data = await getOrSet(
+    key,
+    () => scrapeHomeWidget(name, page, refresh),
+    CACHE_TTL.HOME,
+    refresh
+  );
 
   return NextResponse.json({ ok: true, data });
 }

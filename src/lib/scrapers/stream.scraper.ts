@@ -14,7 +14,13 @@ import { extractStreamUrl, type IntroOutro, type SubtitleTrack } from '../extrac
 import { fetchJson, fetchPage } from '../fetcher';
 import { resolveAnilistIdFromMal } from '../anilist';
 import { getMirrorOrder } from '../mirrors';
-import { getRandomBrowserHeaders, isPrivateUrl, isPrivateUrlAsync } from '../proxy-pool';
+import {
+  getRandomBrowserHeaders,
+  isAllowedStreamDomain,
+  isPrivateUrl,
+  isPrivateUrlAsync,
+  proxyPool,
+} from '../proxy-pool';
 import { scrapeAnimeEpisodes } from './anime.scraper';
 import { makeProxyHelper, parseSkipData } from './watch.scraper';
 
@@ -247,45 +253,72 @@ export interface StreamQuality {
  */
 export async function parseM3u8Qualities(
   m3u8Url: string,
-  referer?: string
+  referer?: string,
+  opts: { enforceAllowlist?: boolean } = {}
 ): Promise<StreamQuality[]> {
-  if (isPrivateUrl(m3u8Url) || (await isPrivateUrlAsync(m3u8Url))) {
-    throw new ApiError(403, 'Access to private or local network addresses is restricted');
-  }
-
   const effectiveReferer = referer || streamReferer();
   const fp = getRandomBrowserHeaders();
-  let content: string;
-  try {
-    const res = await axios.get<string>(m3u8Url, {
-      headers: {
-        'User-Agent': fp['User-Agent'],
-        'Accept-Language': fp['Accept-Language'],
-        Accept: '*/*',
-        Referer: effectiveReferer,
-        Origin: safeOrigin(effectiveReferer),
-      },
-      timeout: 10_000,
-      maxRedirects: 3,
-      maxContentLength: 2_000_000,
-      responseType: 'text',
-      transformResponse: (d) => d,
-      beforeRedirect: (options) => {
-        if (options.href && isPrivateUrl(options.href)) {
-          throw new Error(`SSRF blocked redirect to private address: ${options.href}`);
+  const maxRedirects = 3;
+  let currentUrl = m3u8Url;
+  let content = '';
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    if (isPrivateUrl(currentUrl) || (await isPrivateUrlAsync(currentUrl))) {
+      throw new ApiError(403, 'Access to private or local network addresses is restricted');
+    }
+    if (opts.enforceAllowlist && !isAllowedStreamDomain(currentUrl, effectiveReferer)) {
+      throw new ApiError(403, 'Forbidden: only authorised media domains can be inspected');
+    }
+
+    const proxyUrl = proxyPool.getNextProxy();
+    const httpsAgent = proxyUrl ? proxyPool.getAgent(proxyUrl) : undefined;
+
+    try {
+      const res = await axios.get<string>(currentUrl, {
+        headers: {
+          'User-Agent': fp['User-Agent'],
+          'Accept-Language': fp['Accept-Language'],
+          Accept: '*/*',
+          Referer: effectiveReferer,
+          Origin: safeOrigin(effectiveReferer),
+        },
+        timeout: 10_000,
+        maxRedirects: 0,
+        maxContentLength: 2_000_000,
+        responseType: 'text',
+        transformResponse: (d) => d,
+        validateStatus: (status) => status >= 200 && status < 400,
+        ...(httpsAgent ? { httpsAgent, httpAgent: httpsAgent } : {}),
+      });
+      if (proxyUrl) proxyPool.reportSuccess(proxyUrl);
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.location;
+        if (!location || hop === maxRedirects) {
+          throw new ApiError(502, 'Playlist redirect could not be followed');
         }
-      },
-    });
-    content = typeof res.data === 'string' ? res.data : String(res.data);
-  } catch (err) {
-    const upstream = axios.isAxiosError(err) ? err.response?.status : undefined;
-    throw new ApiError(
-      502,
-      upstream ? `Upstream returned HTTP ${upstream} for the playlist` : 'Could not fetch the playlist'
-    );
+        try {
+          currentUrl = new URL(location, currentUrl).toString();
+        } catch {
+          throw new ApiError(502, 'Upstream returned an invalid redirect location');
+        }
+        continue;
+      }
+
+      content = typeof res.data === 'string' ? res.data : String(res.data);
+      break;
+    } catch (err) {
+      if (proxyUrl) proxyPool.reportFailure(proxyUrl);
+      if (err instanceof ApiError) throw err;
+      const upstream = axios.isAxiosError(err) ? err.response?.status : undefined;
+      throw new ApiError(
+        502,
+        upstream ? `Upstream returned HTTP ${upstream} for the playlist` : 'Could not fetch the playlist'
+      );
+    }
   }
 
-  return parseMasterPlaylist(content, m3u8Url, effectiveReferer);
+  return parseMasterPlaylist(content, currentUrl, effectiveReferer);
 }
 
 /**
@@ -494,16 +527,17 @@ interface ExternalIds {
   anilistId: string | null;
 }
 
-async function resolveExternalIds(slug: string): Promise<ExternalIds> {
+async function resolveExternalIds(slug: string, refresh?: boolean): Promise<ExternalIds> {
   return getOrSet(
     `ext-ids:${slug}`,
     async () => {
-      const { animeId, episodes } = await scrapeAnimeEpisodes(slug);
+      const { animeId, episodes } = await scrapeAnimeEpisodes(slug, undefined, undefined, refresh);
       const malId = episodes.find((e) => e.dataMal)?.dataMal ?? null;
       const anilist = malId ? await resolveAnilistIdFromMal(malId) : null;
       return { animeId, malId, anilistId: anilist ? String(anilist) : null };
     },
-    CACHE_TTL.IDS
+    CACHE_TTL.IDS,
+    refresh
   );
 }
 
@@ -523,14 +557,15 @@ export async function buildEpisodeEmbeds(args: {
   providers?: string[] | null;
   malId?: string | null;
   anilistId?: string | null;
+  refresh?: boolean;
 }): Promise<EmbedsResult> {
-  const { slug = null, episode, lang } = args;
+  const { slug = null, episode, lang, refresh } = args;
   let malId = args.malId ?? null;
   let anilistId = args.anilistId ?? null;
   let animeId = '';
 
   if ((!malId || !anilistId) && slug) {
-    const ids = await resolveExternalIds(slug);
+    const ids = await resolveExternalIds(slug, refresh);
     animeId = ids.animeId;
     malId = malId ?? ids.malId;
     anilistId = anilistId ?? ids.anilistId;

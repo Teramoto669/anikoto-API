@@ -77,13 +77,14 @@ export async function getTopRankings(
 
 export function getRecentlyUpdated(
   tab: 'all' | 'sub' | 'dub',
-  page: number
+  page: number,
+  refresh = false
 ): Promise<HomeWidgetResult> {
-  return scrapeHomeWidget(`updated-${tab}`, page);
+  return scrapeHomeWidget(`updated-${tab}`, page, refresh);
 }
 
-export function getTrending(page: number): Promise<HomeWidgetResult> {
-  return scrapeHomeWidget('trending', page);
+export function getTrending(page: number, refresh = false): Promise<HomeWidgetResult> {
+  return scrapeHomeWidget('trending', page, refresh);
 }
 
 // ─── Listing pages ────────────────────────────────────────────────────────────

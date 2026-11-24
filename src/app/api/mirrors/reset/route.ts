@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 
 function authorised(req: Request): boolean {
   const token = process.env.ADMIN_TOKEN;
-  if (!token) return true; // no token configured → open, like the original API
+  if (!token) return false;
   const header = req.headers.get('authorization') ?? '';
   const supplied = header.toLowerCase().startsWith('bearer ') ? header.slice(7).trim() : '';
   const a = Buffer.from(supplied);
@@ -19,7 +19,7 @@ function authorised(req: Request): boolean {
  * POST /api/mirrors/reset
  *
  * Clears mirror failure state so the primary mirror is tried first again.
- * If the ADMIN_TOKEN environment variable is set, requests must send
+ * Requires `ADMIN_TOKEN` to be configured and requests to send
  * `Authorization: Bearer <ADMIN_TOKEN>`.
  */
 async function handler(req: Request) {

@@ -63,7 +63,7 @@ async function handler(req: Request) {
   const key = `embeds:${slug ?? ''}:${mal ?? ''}:${anilist ?? ''}:${episode}:${lang}:${(providers ?? []).join('-')}`;
   const data = await getOrSet(
     key,
-    () => buildEpisodeEmbeds({ slug, episode, lang, providers, malId: mal, anilistId: anilist }),
+    () => buildEpisodeEmbeds({ slug, episode, lang, providers, malId: mal, anilistId: anilist, refresh }),
     CACHE_TTL.IDS,
     refresh
   );

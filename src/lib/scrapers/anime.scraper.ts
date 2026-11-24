@@ -395,7 +395,9 @@ export async function scrapeSeasons(slugOrId: string, refresh?: boolean): Promis
     const { animeId, slug } = await resolveAnimeId(slugOrId, refresh);
 
     const payload = await fetchJson<{ status?: number | boolean; result?: string }>(
-      `/api/seasons/${animeId}`
+      `/api/seasons/${animeId}`,
+      undefined,
+      refresh
     );
     const fragment =
       payload && Number(payload.status) === 200 && typeof payload.result === 'string'

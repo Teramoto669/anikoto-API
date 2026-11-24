@@ -1,4 +1,4 @@
-import { fail, ok, withApi } from '@/lib/api';
+import { fail, ok, wantsRefresh, withApi } from '@/lib/api';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
 import { getRecentlyUpdated } from '@/lib/scrapers/discovery.scraper';
@@ -21,11 +21,14 @@ async function handler(req: Request) {
   const tab = validateUpdatedTab(searchParams.get('tab'));
   if (!tab) return fail('tab must be one of: all, sub, dub', 400);
   const page = validatePage(searchParams.get('page'));
-  const refresh = searchParams.get('refresh') === '1';
+  const refresh = wantsRefresh(req);
 
-  const data = refresh
-    ? await getRecentlyUpdated(tab, page)
-    : await getOrSet(`widget:updated-${tab}:${page}`, () => getRecentlyUpdated(tab, page), CACHE_TTL.HOME);
+  const data = await getOrSet(
+    `widget:updated-${tab}:${page}`,
+    () => getRecentlyUpdated(tab, page, refresh),
+    CACHE_TTL.HOME,
+    refresh
+  );
   return ok({ tab, ...data });
 }
 

@@ -302,7 +302,7 @@ export const extraPaths = {
       tags: ["System"],
       summary: "Reset mirror state",
       description:
-        "Clears mirror failure state so the primary mirror is tried first again. Requires `Authorization: Bearer <ADMIN_TOKEN>` when ADMIN_TOKEN is set.",
+        "Clears mirror failure state so the primary mirror is tried first again. Requires `ADMIN_TOKEN` to be set and `Authorization: Bearer <ADMIN_TOKEN>`.",
       operationId: "resetMirrors",
       parameters: [] as Param[],
       responses: {

@@ -1,4 +1,4 @@
-import { fail, ok, withApi } from '@/lib/api';
+import { fail, ok, wantsRefresh, withApi } from '@/lib/api';
 import { getOrSet } from '@/lib/cache';
 import { CACHE_TTL } from '@/lib/constants';
 import { isAllowedStreamDomain } from '@/lib/proxy-pool';
@@ -30,10 +30,12 @@ async function handler(req: Request) {
     return fail('Forbidden: only authorised media domains can be inspected', 403);
   }
 
+  const refresh = wantsRefresh(req);
   const qualities = await getOrSet(
-    `qualities:${url}`,
-    () => parseM3u8Qualities(url, referer ?? undefined),
-    CACHE_TTL.STREAM
+    `qualities:${url}:${referer ?? ''}`,
+    () => parseM3u8Qualities(url, referer ?? undefined, { enforceAllowlist: true }),
+    CACHE_TTL.STREAM,
+    refresh
   );
   return ok({ url, totalQualities: qualities.length, qualities });
 }

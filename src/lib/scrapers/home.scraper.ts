@@ -211,10 +211,13 @@ export async function scrapeHome(refresh?: boolean): Promise<HomeData> {
 
 export async function scrapeHomeWidget(
   name: string,
-  page = 1
+  page = 1,
+  refresh?: boolean
 ): Promise<HomeWidgetResult> {
   const json = await fetchJson<{ status?: boolean; result?: string; html?: string }>(
-    `/ajax/home/widget/${encodeURIComponent(name)}?page=${page}`
+    `/ajax/home/widget/${encodeURIComponent(name)}?page=${page}`,
+    undefined,
+    refresh
   );
 
   const html = json?.result || json?.html || '';
